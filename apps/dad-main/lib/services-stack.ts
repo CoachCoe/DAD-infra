@@ -9,7 +9,7 @@ import { EnvConfig } from './config';
 import { buildDatabaseUrl, PROCESS_LOGINS, ProcessLogin } from './db-url';
 import { ServiceName } from './ecs-cluster-stack';
 import { imageTagFor } from './image-tag';
-import { TaskFactory } from './task-factory';
+import { AppSecrets, secretFields, TaskFactory } from './task-factory';
 
 /** Props for {@link ServicesStack}. */
 export interface ServicesStackProps extends cdk.StackProps {
@@ -31,6 +31,8 @@ export interface ServicesStackProps extends cdk.StackProps {
   readonly webSecurityGroup: ec2.ISecurityGroup;
   readonly apiSecurityGroup: ec2.ISecurityGroup;
   readonly workersSecurityGroup: ec2.ISecurityGroup;
+  /** Application and SMTP secrets (see {@link AppSecrets}). */
+  readonly appSecrets: AppSecrets;
 }
 
 /** Internal description of one worker service. */
@@ -72,7 +74,23 @@ export class ServicesStack extends cdk.Stack {
       webSecurityGroup,
       apiSecurityGroup,
       workersSecurityGroup,
+      appSecrets,
     } = props;
+
+    // Which secret fields each process reads, mirroring docker-compose.prod.yml.
+    const stripeKey = secretFields(appSecrets.stripe, ['STRIPE_SECRET_KEY']);
+    const emailKey = secretFields(appSecrets.encryption, ['DONOR_EMAIL_ENCRYPTION_KEY']);
+    // The API queues mail (host, port, sender) but never logs in to the relay.
+    const mailQueue = secretFields(appSecrets.smtp, [
+      'DONOR_SMTP_HOST',
+      'DONOR_SMTP_PORT',
+      'DONOR_EMAIL_FROM',
+    ]);
+    // The mail workers deliver it, so they also get the relay credentials.
+    const mailTransport = {
+      ...mailQueue,
+      ...secretFields(appSecrets.smtp, ['DONOR_SMTP_USERNAME', 'DONOR_SMTP_PASSWORD']),
+    };
 
     const factory = new TaskFactory(this, repositories, imageTagFor(this, config));
     this.services = {} as Record<ServiceName, ecs.FargateService>;
@@ -112,6 +130,14 @@ export class ServicesStack extends cdk.Stack {
         DONOR_STAFF_ORIGIN: config.staffOrigin,
         DONOR_TRUSTED_PROXY_CIDRS: trustedProxyCidrs,
         DONOR_API_DATABASE_URL: dbUrl('api'),
+      },
+      secrets: {
+        ...secretFields(appSecrets.stripe, ['STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET']),
+        ...secretFields(appSecrets.encryption, [
+          'DONOR_EMAIL_ENCRYPTION_KEY',
+          'DONOR_CONTENT_ENCRYPTION_KEY',
+        ]),
+        ...mailQueue,
       },
       portMappings: [{ containerPort: 8002, name: 'api' }],
       // Same probe as docker-compose.prod.yml. Liveness, not readiness: /health/ready
@@ -198,6 +224,9 @@ export class ServicesStack extends cdk.Stack {
         NGINX_ENVSUBST_FILTER: '^INGRESS_',
         NGINX_ENTRYPOINT_QUIET_LOGS: '1',
       },
+      // Written to /etc/nginx/tls by the image's 04-tls-from-env.sh (ECS cannot mount a
+      // secret as a file).
+      secrets: secretFields(appSecrets.tls, ['INGRESS_TLS_FULLCHAIN', 'INGRESS_TLS_PRIVKEY']),
       portMappings: [
         { containerPort: 8080, name: 'http' },
         { containerPort: 8443, name: 'https' },
@@ -282,6 +311,10 @@ export class ServicesStack extends cdk.Stack {
         size: config.taskSizes.worker,
         command: ['worker', '--kind', w.kind],
         environment,
+        secrets: {
+          ...(w.service === 'stripe-worker' ? stripeKey : {}),
+          ...(w.mail ? { ...emailKey, ...mailTransport } : {}),
+        },
         logGroup: logGroups[w.service],
       });
 

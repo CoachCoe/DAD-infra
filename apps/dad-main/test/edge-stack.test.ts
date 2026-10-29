@@ -6,6 +6,8 @@ import { DataStack } from '../lib/data-stack';
 import { EcsClusterStack } from '../lib/ecs-cluster-stack';
 import { ServicesStack } from '../lib/services-stack';
 import { EdgeStack } from '../lib/edge-stack';
+import { SesStack } from '../lib/ses-stack';
+import { AppSecretsStack } from '../lib/app-secrets-stack';
 import { buildGraph } from './helpers';
 
 describe('EdgeStack', () => {
@@ -65,6 +67,8 @@ describe('EdgeStack', () => {
       proxySecurityGroup: network.proxySecurityGroup,
     });
     const cluster = new EcsClusterStack(app, 'c', { env, config, vpc: network.vpc });
+    const ses = new SesStack(app, 'm', { env, config });
+    const secrets = new AppSecretsStack(app, 'x', { env, config });
     const services = new ServicesStack(app, 's', {
       env,
       config,
@@ -81,6 +85,7 @@ describe('EdgeStack', () => {
       webSecurityGroup: network.webSecurityGroup,
       apiSecurityGroup: network.apiSecurityGroup,
       workersSecurityGroup: network.workersSecurityGroup,
+      appSecrets: { ...secrets, smtp: ses.smtpSecret },
     });
     new EdgeStack(app, 'e', {
       env,

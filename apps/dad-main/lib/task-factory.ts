@@ -3,7 +3,30 @@ import { Construct } from 'constructs';
 import * as ecs from 'aws-cdk-lib/aws-ecs';
 import * as ecr from 'aws-cdk-lib/aws-ecr';
 import * as logs from 'aws-cdk-lib/aws-logs';
+import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import { TaskSize } from './config';
+
+/** The application and SMTP secrets the task definitions inject as env vars. */
+export interface AppSecrets {
+  /** dad/<env>/app/stripe: STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET. */
+  readonly stripe: secretsmanager.ISecret;
+  /** dad/<env>/app/encryption: DONOR_EMAIL_ENCRYPTION_KEY, DONOR_CONTENT_ENCRYPTION_KEY. */
+  readonly encryption: secretsmanager.ISecret;
+  /** dad/<env>/ingress/tls: INGRESS_TLS_FULLCHAIN, INGRESS_TLS_PRIVKEY. */
+  readonly tls: secretsmanager.ISecret;
+  /** dad/<env>/ses/smtp: DONOR_SMTP_HOST/PORT/USERNAME/PASSWORD, DONOR_EMAIL_FROM. */
+  readonly smtp: secretsmanager.ISecret;
+}
+
+/** ECS secrets for the named JSON fields of one Secrets Manager secret. */
+export function secretFields(
+  secret: secretsmanager.ISecret,
+  fields: readonly string[],
+): Record<string, ecs.Secret> {
+  return Object.fromEntries(
+    fields.map((f) => [f, ecs.Secret.fromSecretsManager(secret, f)]),
+  );
+}
 
 /** Which built image a task runs. */
 export type ImageName = 'api' | 'web' | 'nginx';
