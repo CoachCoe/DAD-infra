@@ -8,6 +8,7 @@ import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import { EnvConfig } from './config';
 import { buildDatabaseUrl, PROCESS_LOGINS, ProcessLogin } from './db-url';
 import { ServiceName } from './ecs-cluster-stack';
+import { imageTagFor } from './image-tag';
 import { TaskFactory } from './task-factory';
 
 /** Props for {@link ServicesStack}. */
@@ -73,7 +74,7 @@ export class ServicesStack extends cdk.Stack {
       workersSecurityGroup,
     } = props;
 
-    const factory = new TaskFactory(this, repositories);
+    const factory = new TaskFactory(this, repositories, imageTagFor(this, config));
     this.services = {} as Record<ServiceName, ecs.FargateService>;
 
     // A rollout that cannot reach a steady state (tasks failing to start or failing
