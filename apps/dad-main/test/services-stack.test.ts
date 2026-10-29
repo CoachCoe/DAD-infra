@@ -141,6 +141,52 @@ describe('ServicesStack', () => {
     });
   });
 
+  // config.workersEnabled is the ONE worker switch: it sets the desired count, and
+  // DAD-Main's deploy.yml reads that from ECS instead of keeping its own flag.
+  describe('worker switch', () => {
+    const WORKERS = [
+      'stripe-worker',
+      'projection-worker',
+      'login-email-worker',
+      'email-change-worker',
+      'message-worker',
+      'push-worker',
+    ];
+    const counts = (t: Template) =>
+      Object.fromEntries(
+        Object.values(t.findResources('AWS::ECS::Service')).map((s) => [
+          s.Properties.ServiceName,
+          s.Properties.DesiredCount,
+        ]),
+      );
+
+    it.each(['staging', 'production'] as const)('%s: workers are off by default', (env) => {
+      const c = counts(Template.fromStack(buildGraph(env).services));
+      for (const w of WORKERS) expect([w, c[w]]).toEqual([w, 0]);
+      // The HTTP services are unaffected.
+      for (const s of ['api', 'web', 'nginx']) expect(c[s]).toBeGreaterThan(0);
+    });
+
+    it('turning the switch on runs each worker at its configured count', () => {
+      const g = buildGraph('production', { workersEnabled: true });
+      const c = counts(Template.fromStack(g.services));
+      for (const w of WORKERS) expect([w, c[w]]).toEqual([w, g.config.desiredCounts.workers]);
+      expect(g.config.desiredCounts.workers).toBeGreaterThan(0);
+    });
+
+    it('always sets DONOR_GO_WORKERS_ENABLED=true, which the worker binary requires', () => {
+      for (const enabled of [false, true]) {
+        const t = Template.fromStack(buildGraph('staging', { workersEnabled: enabled }).services);
+        const defs = Object.values(t.findResources('AWS::ECS::TaskDefinition'));
+        for (const w of WORKERS) {
+          const def = defs.find((d) => d.Properties.Family === `dad-${w}`);
+          const env = def!.Properties.ContainerDefinitions[0].Environment as Array<{ Name: string; Value: string }>;
+          expect(env).toContainEqual({ Name: 'DONOR_GO_WORKERS_ENABLED', Value: 'true' });
+        }
+      }
+    });
+  });
+
   it('api registers in Service Connect reachable as api:8002', () => {
     const t = Template.fromStack(buildGraph('staging').services);
     t.hasResourceProperties('AWS::ECS::Service', {

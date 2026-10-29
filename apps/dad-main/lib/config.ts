@@ -78,6 +78,14 @@ export interface EnvConfig extends SharedEnvConfig {
   readonly sendingSubdomain: string;
   /** Whether the nginx ingress SG is restricted to Cloudflare ranges. */
   readonly cloudflareIngressEnabled: boolean;
+  /**
+   * Whether the six worker services run. The ONE switch for workers: when false their
+   * desired count is 0, and DAD-Main's deploy.yml skips rolling services ECS reports at a
+   * desired count of 0 instead of keeping its own flag. (The worker binary also requires
+   * DONOR_GO_WORKERS_ENABLED=true; the task definitions always set it, so this switch is
+   * the desired count, not that variable.)
+   */
+  readonly workersEnabled: boolean;
 }
 
 /** The DAD-Main-specific fields layered on top of the shared core, per env. */
@@ -128,6 +136,8 @@ const STAGING: AppFields = {
   taskSizes: STAGING_TASK_SIZES,
   sendingSubdomain: 'mail.staging.dynamicaid.org',
   cloudflareIngressEnabled: true,
+  // Off until the environment is ready to send mail and talk to Stripe (docs/bootstrap.md).
+  workersEnabled: false,
 };
 
 const PRODUCTION: AppFields = {
@@ -144,6 +154,7 @@ const PRODUCTION: AppFields = {
   taskSizes: PRODUCTION_TASK_SIZES,
   sendingSubdomain: 'mail.dynamicaid.org',
   cloudflareIngressEnabled: true,
+  workersEnabled: false,
 };
 
 const APP_FIELDS: Record<EnvName, AppFields> = {

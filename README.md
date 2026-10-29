@@ -46,8 +46,9 @@ stack). The credentialed jobs stay skipped until the variable is set.
 
 **The environment is the access control.** Any job in the trusted repo that runs under
 the environment can assume the role, so restrict deployments in each environment's
-settings: `staging` to the `dev` branch; `production` to `main` and release tags, with
-required reviewers. Without a deployment-branch rule, a workflow on any branch could
+settings: `staging` to the `dev` branch; `production` to `main`, with required reviewers.
+Production is deployed only by a push to `main`: there is no release- or tag-triggered
+path. Without a deployment-branch rule, a workflow on any branch could
 select the environment.
 
 ## Offline verification (no deploys)
