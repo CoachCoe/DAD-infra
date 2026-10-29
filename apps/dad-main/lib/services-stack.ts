@@ -8,12 +8,8 @@ import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import { EnvConfig } from './config';
 import { buildDatabaseUrl, PROCESS_LOGINS, ProcessLogin } from './db-url';
 import { ServiceName } from './ecs-cluster-stack';
-<<<<<<< HEAD
 import { imageTagFor } from './image-tag';
-import { TaskFactory } from './task-factory';
-=======
 import { AppSecrets, secretFields, TaskFactory } from './task-factory';
->>>>>>> 6331798 (feat(dad-main): wire application secrets into the task definitions)
 
 /** Props for {@link ServicesStack}. */
 export interface ServicesStackProps extends cdk.StackProps {
@@ -81,9 +77,6 @@ export class ServicesStack extends cdk.Stack {
       appSecrets,
     } = props;
 
-<<<<<<< HEAD
-    const factory = new TaskFactory(this, repositories, imageTagFor(this, config));
-=======
     // Which secret fields each process reads, mirroring docker-compose.prod.yml.
     const stripeKey = secretFields(appSecrets.stripe, ['STRIPE_SECRET_KEY']);
     const emailKey = secretFields(appSecrets.encryption, ['DONOR_EMAIL_ENCRYPTION_KEY']);
@@ -99,8 +92,7 @@ export class ServicesStack extends cdk.Stack {
       ...secretFields(appSecrets.smtp, ['DONOR_SMTP_USERNAME', 'DONOR_SMTP_PASSWORD']),
     };
 
-    const factory = new TaskFactory(this, repositories);
->>>>>>> 6331798 (feat(dad-main): wire application secrets into the task definitions)
+    const factory = new TaskFactory(this, repositories, imageTagFor(this, config));
     this.services = {} as Record<ServiceName, ecs.FargateService>;
 
     // A rollout that cannot reach a steady state (tasks failing to start or failing
