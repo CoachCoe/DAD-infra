@@ -13,7 +13,6 @@ describe('getAtmConfig', () => {
     expect(config.dynamoBillingMode).toBe('PAY_PER_REQUEST');
     expect(config.computeType).toBe(ComputeType.MEDIUM);
     expect(config.githubRepo).toBe(DAD_MAIN_REPO);
-    expect(config.githubBranch).toBe('dev');
   });
 
   test('production inherits the production account and sets production overrides', () => {
@@ -23,7 +22,6 @@ describe('getAtmConfig', () => {
     expect(config.evidenceRetentionDays).toBe(365);
     expect(config.deletionProtection).toBe(true);
     expect(config.computeType).toBe(ComputeType.LARGE);
-    expect(config.githubBranch).toBe('main');
   });
 
   test('defaults to staging and throws on an unknown env (delegated to shared config)', () => {

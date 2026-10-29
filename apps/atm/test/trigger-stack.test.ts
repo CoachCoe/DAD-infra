@@ -8,8 +8,8 @@ import { RunnerStack } from '../lib/runner-stack';
 import { TriggerStack } from '../lib/trigger-stack';
 
 function build(env: 'staging' | 'production'): {
-  template: Template;
-  projectName: string;
+  stacks: Record<string, cdk.Stack>;
+  trigger: Template;
 } {
   const app = new cdk.App();
   const config = getAtmConfig(env);
@@ -36,79 +36,67 @@ function build(env: 'staging' | 'production'): {
     project: runner.project,
   });
   return {
-    template: Template.fromStack(trigger),
-    projectName: `atm-runner-${env}`,
+    stacks: { evidence, ledger, secrets, runner, trigger },
+    trigger: Template.fromStack(trigger),
   };
 }
 
 describe('TriggerStack', () => {
   test('the scheduler target is the runner project', () => {
-    const { template } = build('staging');
-    template.hasResourceProperties('AWS::Scheduler::Schedule', {
+    const { trigger } = build('staging');
+    trigger.hasResourceProperties('AWS::Scheduler::Schedule', {
       Target: Match.objectLike({
         Arn: {
           'Fn::ImportValue': Match.anyValue(),
         },
       }),
     });
-    // The schedule exists and is named for the env.
-    template.hasResourceProperties('AWS::Scheduler::Schedule', {
+    trigger.hasResourceProperties('AWS::Scheduler::Schedule', {
       Name: 'atm-nightly-staging',
     });
   });
 
-  test('the StartBuild role action is exactly codebuild:StartBuild on the project ARN', () => {
-    const { template } = build('staging');
-    // Both the scheduler role and the OIDC role carry exactly StartBuild.
-    const policies = template.findResources('AWS::IAM::Policy');
-    const startBuildStatements = Object.values(policies).flatMap((p) =>
-      (p.Properties.PolicyDocument.Statement as Array<{ Action: unknown }>).filter(
-        (s) => s.Action === 'codebuild:StartBuild',
-      ),
-    );
-    expect(startBuildStatements.length).toBeGreaterThanOrEqual(2);
-    for (const stmt of startBuildStatements) {
-      expect(stmt.Action).toBe('codebuild:StartBuild');
+  test('the only way to start a run is the scheduler role, limited to StartBuild on the project', () => {
+    for (const env of ['staging', 'production'] as const) {
+      const { trigger } = build(env);
+      const roles = trigger.findResources('AWS::IAM::Role');
+      expect(Object.keys(roles)).toHaveLength(1);
+      trigger.hasResourceProperties('AWS::IAM::Role', {
+        RoleName: `atm-scheduler-${env}`,
+        AssumeRolePolicyDocument: {
+          Statement: [
+            Match.objectLike({
+              Action: 'sts:AssumeRole',
+              Principal: { Service: 'scheduler.amazonaws.com' },
+            }),
+          ],
+        },
+      });
+      const statements = Object.values(trigger.findResources('AWS::IAM::Policy')).flatMap(
+        (p) => p.Properties.PolicyDocument.Statement as Array<{ Action: unknown }>,
+      );
+      expect(statements).toHaveLength(1);
+      expect(statements[0].Action).toBe('codebuild:StartBuild');
     }
   });
 
-  test('the OIDC role trust subject matches the DAD-Main repo + env branch', () => {
-    const staging = build('staging').template;
-    staging.hasResourceProperties('AWS::IAM::Role', {
-      RoleName: 'atm-startbuild-staging',
-      AssumeRolePolicyDocument: {
-        Statement: Match.arrayWith([
-          Match.objectLike({
-            Action: 'sts:AssumeRoleWithWebIdentity',
-            Condition: Match.objectLike({
-              StringLike: {
-                'token.actions.githubusercontent.com:sub': [
-                  'repo:CoachCoe/DAD-Main:ref:refs/heads/dev',
-                ],
-              },
-            }),
-          }),
-        ]),
-      },
-    });
-
-    const production = build('production').template;
-    production.hasResourceProperties('AWS::IAM::Role', {
-      RoleName: 'atm-startbuild-production',
-      AssumeRolePolicyDocument: {
-        Statement: Match.arrayWith([
-          Match.objectLike({
-            Condition: Match.objectLike({
-              StringLike: {
-                'token.actions.githubusercontent.com:sub': [
-                  'repo:CoachCoe/DAD-Main:environment:production',
-                  'repo:CoachCoe/DAD-Main:ref:refs/tags/*',
-                ],
-              },
-            }),
-          }),
-        ]),
-      },
-    });
+  // DAD-Main CI deliberately cannot start a run yet (see trigger-stack.ts), and an
+  // account has exactly one GitHub OIDC provider, which apps/dad-main owns. Two stacks
+  // creating it would fail the second deploy.
+  test('creates no GitHub OIDC provider and no web-identity role in any atm stack', () => {
+    const offenders: string[] = [];
+    for (const env of ['staging', 'production'] as const) {
+      const { stacks } = build(env);
+      for (const [name, stack] of Object.entries(stacks)) {
+        const t = Template.fromStack(stack);
+        if (Object.keys(t.findResources('Custom::AWSCDKOpenIdConnectProvider')).length > 0) {
+          offenders.push(`${name} (${env}): creates an OIDC provider`);
+        }
+        if (JSON.stringify(t.toJSON()).includes('sts:AssumeRoleWithWebIdentity')) {
+          offenders.push(`${name} (${env}): trusts web identities`);
+        }
+      }
+    }
+    expect(offenders).toEqual([]);
   });
 });
