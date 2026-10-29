@@ -9,6 +9,7 @@ import { MaintenanceStack } from '../lib/maintenance-stack';
 import { EdgeStack } from '../lib/edge-stack';
 import { ObservabilityStack } from '../lib/observability-stack';
 import { SesStack } from '../lib/ses-stack';
+import { AppSecretsStack } from '../lib/app-secrets-stack';
 import { PipelineIamStack } from '../lib/pipeline-iam-stack';
 
 /**
@@ -68,6 +69,10 @@ const ecsCluster = new EcsClusterStack(app, stackId('ecs-cluster'), {
   vpc: network.vpc,
 });
 
+// SES (sending identity + SMTP secret) and the application secrets come before the
+// services, which inject them.
+const ses = new SesStack(app, stackId('ses'), { env, config });
+const appSecrets = new AppSecretsStack(app, stackId('app-secrets'), { env, config });
 // 4. Services — the nine long-running Fargate services.
 const services = new ServicesStack(app, stackId('services'), {
   env,
@@ -85,6 +90,12 @@ const services = new ServicesStack(app, stackId('services'), {
   webSecurityGroup: network.webSecurityGroup,
   apiSecurityGroup: network.apiSecurityGroup,
   workersSecurityGroup: network.workersSecurityGroup,
+  appSecrets: {
+    stripe: appSecrets.stripe,
+    encryption: appSecrets.encryption,
+    tls: appSecrets.tls,
+    smtp: ses.smtpSecret,
+  },
 });
 
 // 5. Maintenance — one-off task defs + scheduled reconcile + exit alarm.
@@ -98,6 +109,12 @@ new MaintenanceStack(app, stackId('maintenance'), {
   proxyEndpoint: data.proxyEndpoint,
   loginSecrets: data.loginSecrets,
   workersSecurityGroup: network.workersSecurityGroup,
+  appSecrets: {
+    stripe: appSecrets.stripe,
+    encryption: appSecrets.encryption,
+    tls: appSecrets.tls,
+    smtp: ses.smtpSecret,
+  },
 });
 
 // 6. Edge — internet-facing NLB + Cloudflare SG toggle.
@@ -119,8 +136,6 @@ new ObservabilityStack(app, stackId('observability'), {
   services: services.services,
 });
 
-// 8. SES — sending-subdomain identity + SMTP credentials.
-new SesStack(app, stackId('ses'), { env, config });
 
 // 9. Pipeline IAM — GitHub OIDC provider + deploy roles.
 new PipelineIamStack(app, stackId('pipeline-iam'), { env, config });

@@ -8,6 +8,7 @@ import { MaintenanceStack } from '../lib/maintenance-stack';
 import { EdgeStack } from '../lib/edge-stack';
 import { ObservabilityStack } from '../lib/observability-stack';
 import { SesStack } from '../lib/ses-stack';
+import { AppSecretsStack } from '../lib/app-secrets-stack';
 import { PipelineIamStack } from '../lib/pipeline-iam-stack';
 
 const ENV = { account: '111111111111', region: 'us-east-2' };
@@ -33,6 +34,8 @@ export function buildGraph(name: EnvName = 'staging') {
     config,
     vpc: network.vpc,
   });
+  const ses = new SesStack(app, `dad-ses-${name}`, { env: ENV, config });
+  const appSecrets = new AppSecretsStack(app, `dad-app-secrets-${name}`, { env: ENV, config });
   const services = new ServicesStack(app, `dad-services-${name}`, {
     env: ENV,
     config,
@@ -49,6 +52,12 @@ export function buildGraph(name: EnvName = 'staging') {
     webSecurityGroup: network.webSecurityGroup,
     apiSecurityGroup: network.apiSecurityGroup,
     workersSecurityGroup: network.workersSecurityGroup,
+    appSecrets: {
+      stripe: appSecrets.stripe,
+      encryption: appSecrets.encryption,
+      tls: appSecrets.tls,
+      smtp: ses.smtpSecret,
+    },
   });
   const maintenance = new MaintenanceStack(app, `dad-maintenance-${name}`, {
     env: ENV,
@@ -60,6 +69,12 @@ export function buildGraph(name: EnvName = 'staging') {
     proxyEndpoint: data.proxyEndpoint,
     loginSecrets: data.loginSecrets,
     workersSecurityGroup: network.workersSecurityGroup,
+    appSecrets: {
+      stripe: appSecrets.stripe,
+      encryption: appSecrets.encryption,
+      tls: appSecrets.tls,
+      smtp: ses.smtpSecret,
+    },
   });
   const edge = new EdgeStack(app, `dad-edge-${name}`, {
     env: ENV,
@@ -80,7 +95,6 @@ export function buildGraph(name: EnvName = 'staging') {
       services: services.services,
     },
   );
-  const ses = new SesStack(app, `dad-ses-${name}`, { env: ENV, config });
   const pipelineIam = new PipelineIamStack(app, `dad-pipeline-iam-${name}`, {
     env: ENV,
     config,
@@ -97,6 +111,7 @@ export function buildGraph(name: EnvName = 'staging') {
     edge,
     observability,
     ses,
+    appSecrets,
     pipelineIam,
   };
 }

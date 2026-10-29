@@ -18,7 +18,7 @@ import {
   OWNER_LOGIN,
   ProcessLogin,
 } from './db-url';
-import { TaskFactory } from './task-factory';
+import { AppSecrets, secretFields, TaskFactory } from './task-factory';
 
 /** Props for {@link MaintenanceStack}. */
 export interface MaintenanceStackProps extends cdk.StackProps {
@@ -30,6 +30,8 @@ export interface MaintenanceStackProps extends cdk.StackProps {
   readonly proxyEndpoint: string;
   readonly loginSecrets: Record<string, secretsmanager.ISecret>;
   readonly workersSecurityGroup: ec2.ISecurityGroup;
+  /** Application secrets (rekey reads the encryption keys, reconcile the Stripe key). */
+  readonly appSecrets: AppSecrets;
   /** Optional existing SNS topic for alarms (else one is created). */
   readonly alarmTopic?: sns.ITopic;
 }
@@ -63,6 +65,7 @@ export class MaintenanceStack extends cdk.Stack {
       proxyEndpoint,
       loginSecrets,
       workersSecurityGroup,
+      appSecrets,
     } = props;
 
     const factory = new TaskFactory(this, repositories, imageTagFor(this, config));
@@ -104,6 +107,7 @@ export class MaintenanceStack extends cdk.Stack {
       taskId: string,
       command: string[],
       environment: Record<string, string>,
+      secrets: Record<string, ecs.Secret> = {},
     ): ecs.FargateTaskDefinition => {
       const { taskDefinition } = factory.build({
         id: `maint-${taskId}`,
@@ -111,6 +115,7 @@ export class MaintenanceStack extends cdk.Stack {
         size: config.taskSizes.worker,
         command,
         environment,
+        secrets,
         logGroup: log,
         logStreamPrefix: taskId,
       });
@@ -127,23 +132,29 @@ export class MaintenanceStack extends cdk.Stack {
       DONOR_STAFF_ORIGIN: config.staffOrigin,
       [PROCESS_LOGINS.staff.envVar]: dbUrl(PROCESS_LOGINS.staff),
     });
-    defineTask('rekey', ['rekey'], {
-      // Encryption keys are crown jewels; wired as plain env placeholders here
-      // and supplied from Secrets Manager at run time via run-task overrides.
-      DONOR_EMAIL_ENCRYPTION_KEY: '',
-      DONOR_CONTENT_ENCRYPTION_KEY: '',
-      [PROCESS_LOGINS.rekey.envVar]: dbUrl(PROCESS_LOGINS.rekey),
-    });
+    defineTask(
+      'rekey',
+      ['rekey'],
+      { [PROCESS_LOGINS.rekey.envVar]: dbUrl(PROCESS_LOGINS.rekey) },
+      secretFields(appSecrets.encryption, [
+        'DONOR_EMAIL_ENCRYPTION_KEY',
+        'DONOR_CONTENT_ENCRYPTION_KEY',
+      ]),
+    );
     defineTask('monitor', ['monitor'], {
       [PROCESS_LOGINS.monitor.envVar]: dbUrl(PROCESS_LOGINS.monitor),
     });
 
     // --- reconcile task definition --------------------------------------
-    const reconcileTask = defineTask('reconcile', ['reconcile'], {
-      STRIPE_SECRET_KEY: '',
-      DONOR_STRIPE_REQUESTS_PER_SECOND: '25',
-      [PROCESS_LOGINS.reconcile.envVar]: dbUrl(PROCESS_LOGINS.reconcile),
-    });
+    const reconcileTask = defineTask(
+      'reconcile',
+      ['reconcile'],
+      {
+        DONOR_STRIPE_REQUESTS_PER_SECOND: '25',
+        [PROCESS_LOGINS.reconcile.envVar]: dbUrl(PROCESS_LOGINS.reconcile),
+      },
+      secretFields(appSecrets.stripe, ['STRIPE_SECRET_KEY']),
+    );
 
     // --- SNS topic for alarms -------------------------------------------
     this.alarmTopic =
