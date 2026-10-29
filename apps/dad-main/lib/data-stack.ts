@@ -44,6 +44,12 @@ export class DataStack extends cdk.Stack {
   public readonly loginSecrets: Record<string, secretsmanager.Secret>;
   /** The SG for the RDS instance (owned here to avoid a cross-stack cycle). */
   public readonly databaseSecurityGroup: ec2.SecurityGroup;
+  /**
+   * Security group for the one-off owner bootstrap task (maintenance stack). It is the
+   * only thing besides the RDS Proxy that may reach the instance, because the master
+   * secret is deliberately not registered with the proxy.
+   */
+  public readonly bootstrapSecurityGroup: ec2.SecurityGroup;
 
   constructor(scope: Construct, id: string, props: DataStackProps) {
     super(scope, id, props);
@@ -61,6 +67,17 @@ export class DataStack extends cdk.Stack {
       proxySecurityGroup,
       ec2.Port.tcp(5432),
       'rds from proxy',
+    );
+    this.bootstrapSecurityGroup = new ec2.SecurityGroup(this, 'BootstrapSg', {
+      vpc,
+      description: 'DAD one-off database owner bootstrap task (connects to RDS directly).',
+      // Outbound: RDS, the RDS CA bundle (HTTPS), and the image pull through NAT.
+      allowAllOutbound: true,
+    });
+    this.databaseSecurityGroup.addIngressRule(
+      this.bootstrapSecurityGroup,
+      ec2.Port.tcp(5432),
+      'rds from the owner bootstrap task',
     );
 
     // --- RDS PostgreSQL 16 ----------------------------------------------
@@ -143,6 +160,10 @@ export class DataStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'ProxyEndpoint', {
       value: this.proxyEndpoint,
       description: 'RDS Proxy read/write endpoint host used to build DB URLs.',
+    });
+    new cdk.CfnOutput(this, 'BootstrapSecurityGroupId', {
+      description: 'Security group to pass to run-task.sh for the bootstrap-owner task.',
+      value: this.bootstrapSecurityGroup.securityGroupId,
     });
     new cdk.CfnOutput(this, 'MasterSecretArn', {
       value: this.masterSecret.secretArn,

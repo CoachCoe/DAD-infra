@@ -108,6 +108,8 @@ new MaintenanceStack(app, stackId('maintenance'), {
   repositories: ecsCluster.repositories,
   proxyEndpoint: data.proxyEndpoint,
   loginSecrets: data.loginSecrets,
+  masterSecret: data.masterSecret,
+  databaseHost: data.instance.dbInstanceEndpointAddress,
   workersSecurityGroup: network.workersSecurityGroup,
   appSecrets: {
     stripe: appSecrets.stripe,

@@ -55,6 +55,7 @@ describe('application secrets', () => {
       'dad-maint-rekey': ['DONOR_CONTENT_ENCRYPTION_KEY', 'DONOR_EMAIL_ENCRYPTION_KEY'],
       'dad-maint-monitor': [],
       'dad-maint-reconcile': ['STRIPE_SECRET_KEY'],
+      'dad-maint-bootstrap-owner': ['MASTER_PASSWORD', 'MASTER_USER', 'OWNER_PASSWORD'],
     });
   });
 
@@ -69,6 +70,8 @@ describe('application secrets', () => {
       'DONOR_SMTP_USERNAME',
       'INGRESS_TLS_FULLCHAIN',
       'INGRESS_TLS_PRIVKEY',
+      'MASTER_PASSWORD',
+      'OWNER_PASSWORD',
     ]);
     const offenders: string[] = [];
     for (const stack of [g.services, g.maintenance]) {

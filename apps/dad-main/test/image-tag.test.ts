@@ -45,6 +45,9 @@ describe('image tag from SSM', () => {
         );
         expect(defs.length).toBeGreaterThan(0);
         for (const def of defs) {
+          // The owner bootstrap runs a stock PostgreSQL client image, not a DAD image;
+          // it is pinned by digest instead (db-bootstrap.test.ts).
+          if (def.Properties.Family === 'dad-maint-bootstrap-owner') continue;
           for (const container of def.Properties.ContainerDefinitions) {
             const image = JSON.stringify(container.Image);
             expect([def.Properties.Family, image.includes(`":",{"Ref":"${paramId}"}`)]).toEqual([
