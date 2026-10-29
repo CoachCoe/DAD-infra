@@ -29,6 +29,12 @@ export interface TaskDefinitionSpec {
   readonly secrets?: Record<string, ecs.Secret>;
   /** Container ports to expose (e.g. 8002 for api, 8080/8443 for nginx). */
   readonly portMappings?: ecs.PortMapping[];
+  /**
+   * Container health check. ECS ignores a Dockerfile HEALTHCHECK, so a service whose
+   * rollout should be gated on health must declare it here. Omit for tasks with no
+   * HTTP surface (the workers, one-off maintenance tasks).
+   */
+  readonly healthCheck?: ecs.HealthCheck;
   /** The log group this task writes to. */
   readonly logGroup: logs.ILogGroup;
   /** Log stream prefix (defaults to the task id). */
@@ -73,6 +79,7 @@ export class TaskFactory {
       command: spec.command,
       environment: spec.environment,
       secrets: spec.secrets,
+      healthCheck: spec.healthCheck,
       logging: ecs.LogDrivers.awsLogs({
         logGroup: spec.logGroup,
         streamPrefix: spec.logStreamPrefix ?? spec.id,
