@@ -117,6 +117,48 @@ describe('PipelineIamStack', () => {
     });
   });
 
+  // The pipeline scripts call these ECS APIs: ecs-pin-image.sh (describe + register a
+  // task definition), run-task.sh (run-task, describe-tasks), ecs-rollout.sh
+  // (update-service, describe-services). A missing action fails the first real deploy.
+  it('lets app-deploy do every ECS call the DAD-Main pipeline scripts make', () => {
+    const t = Template.fromStack(buildGraph('staging').pipelineIam);
+    const policies = Object.values(t.findResources('AWS::IAM::Policy'));
+    const actions = policies
+      .flatMap((p) => p.Properties.PolicyDocument.Statement as Array<{ Action: string | string[] }>)
+      .flatMap((s) => (Array.isArray(s.Action) ? s.Action : [s.Action]));
+    for (const needed of [
+      'ecs:DescribeTaskDefinition',
+      'ecs:RegisterTaskDefinition',
+      'ecs:RunTask',
+      'ecs:DescribeTasks',
+      'ecs:UpdateService',
+      'ecs:DescribeServices',
+    ]) {
+      expect(actions).toContain(needed);
+    }
+  });
+
+  it('lets app-deploy tag only this env\'s dad-* task definition revisions it registers', () => {
+    for (const [env, account] of [
+      ['staging', '853377042897'],
+      ['production', '216833405626'],
+    ] as const) {
+      const t = Template.fromStack(buildGraph(env).pipelineIam);
+      t.hasResourceProperties('AWS::IAM::Policy', {
+        PolicyDocument: {
+          Statement: Match.arrayWith([
+            Match.objectLike({
+              Sid: 'TagPinnedTaskDefinitions',
+              Effect: 'Allow',
+              Action: 'ecs:TagResource',
+              Resource: `arn:aws:ecs:us-east-2:${account}:task-definition/dad-*:*`,
+            }),
+          ]),
+        },
+      });
+    }
+  });
+
   it('lets app-deploy read only this env\'s dad-* stack outputs (deploy.yml resolves names from them)', () => {
     for (const [env, account] of [
       ['staging', '853377042897'],
