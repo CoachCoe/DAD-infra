@@ -1,5 +1,27 @@
+import * as cdk from 'aws-cdk-lib';
 import { Template, Match } from 'aws-cdk-lib/assertions';
+import { getConfig } from '../lib/config';
+import {
+  DAD_INFRA_REPO,
+  DAD_MAIN_REPO,
+  PipelineIamStack,
+} from '../lib/pipeline-iam-stack';
 import { buildGraph } from './helpers';
+
+const SUB = 'token.actions.githubusercontent.com:sub';
+const AUD = 'token.actions.githubusercontent.com:aud';
+
+/** The trust-policy condition of the single role named `roleName`. */
+function trustCondition(t: Template, roleName: string): unknown {
+  const roles = t.findResources('AWS::IAM::Role', {
+    Properties: { RoleName: roleName },
+  });
+  const ids = Object.keys(roles);
+  expect(ids).toHaveLength(1);
+  const statements = roles[ids[0]].Properties.AssumeRolePolicyDocument.Statement;
+  expect(statements).toHaveLength(1);
+  return statements[0].Condition;
+}
 
 describe('PipelineIamStack', () => {
   it('creates the GitHub OIDC provider', () => {
@@ -10,24 +32,87 @@ describe('PipelineIamStack', () => {
     });
   });
 
-  it('creates two deploy roles (infra + app) scoped to the repo/branch', () => {
-    const t = Template.fromStack(buildGraph('staging').pipelineIam);
-    for (const name of ['dad-staging-infra-deploy', 'dad-staging-app-deploy']) {
-      t.hasResourceProperties('AWS::IAM::Role', { RoleName: name });
+  it('names the two deploy roles per environment', () => {
+    for (const env of ['staging', 'production'] as const) {
+      const t = Template.fromStack(buildGraph(env).pipelineIam);
+      for (const name of [`dad-${env}-infra-deploy`, `dad-${env}-app-deploy`]) {
+        t.hasResourceProperties('AWS::IAM::Role', { RoleName: name });
+      }
     }
-    t.hasResourceProperties('AWS::IAM::Role', {
-      AssumeRolePolicyDocument: {
-        Statement: Match.arrayWith([
-          Match.objectLike({
-            Condition: Match.objectLike({
-              StringLike: {
-                'token.actions.githubusercontent.com:sub': [
-                  'repo:dynamicaid/dad:ref:refs/heads/dev',
-                ],
-              },
-            }),
-          }),
-        ]),
+  });
+
+  // Every deploy job runs under a GitHub Environment, so GitHub issues
+  // sub = repo:<repo>:environment:<env> (not the branch or tag form). Each role
+  // trusts exactly that, for exactly the repo whose workflow assumes it.
+  it.each(['staging', 'production'] as const)(
+    '%s: infra-deploy trusts only the DAD-infra repo\'s GitHub Environment',
+    (env) => {
+      const t = Template.fromStack(buildGraph(env).pipelineIam);
+      expect(trustCondition(t, `dad-${env}-infra-deploy`)).toEqual({
+        StringEquals: {
+          [AUD]: 'sts.amazonaws.com',
+          [SUB]: `repo:CoachCoe/DAD-infra:environment:${env}`,
+        },
+      });
+    },
+  );
+
+  it.each(['staging', 'production'] as const)(
+    '%s: app-deploy trusts only the DAD-Main repo\'s GitHub Environment',
+    (env) => {
+      const t = Template.fromStack(buildGraph(env).pipelineIam);
+      expect(trustCondition(t, `dad-${env}-app-deploy`)).toEqual({
+        StringEquals: {
+          [AUD]: 'sts.amazonaws.com',
+          [SUB]: `repo:CoachCoe/DAD-Main:environment:${env}`,
+        },
+      });
+    },
+  );
+
+  it('defaults to the real repos and neither role trusts the other\'s repo', () => {
+    expect(DAD_INFRA_REPO).toBe('CoachCoe/DAD-infra');
+    expect(DAD_MAIN_REPO).toBe('CoachCoe/DAD-Main');
+    const t = Template.fromStack(buildGraph('staging').pipelineIam);
+    expect(JSON.stringify(trustCondition(t, 'dad-staging-infra-deploy'))).not.toContain(
+      'DAD-Main',
+    );
+    expect(JSON.stringify(trustCondition(t, 'dad-staging-app-deploy'))).not.toContain(
+      'DAD-infra',
+    );
+  });
+
+  it('never uses a wildcard or branch/tag subject', () => {
+    for (const env of ['staging', 'production'] as const) {
+      const t = Template.fromStack(buildGraph(env).pipelineIam);
+      for (const role of ['infra-deploy', 'app-deploy']) {
+        const c = JSON.stringify(trustCondition(t, `dad-${env}-${role}`));
+        expect(c).not.toContain('StringLike');
+        expect(c).not.toContain('*');
+        expect(c).not.toContain(':ref:');
+      }
+    }
+  });
+
+  it('accepts per-role repo overrides', () => {
+    const app = new cdk.App();
+    const stack = new PipelineIamStack(app, 'override', {
+      env: { account: '111111111111', region: 'us-east-2' },
+      config: getConfig('staging'),
+      infraRepo: 'octo/infra',
+      appRepo: 'octo/app',
+    });
+    const t = Template.fromStack(stack);
+    expect(trustCondition(t, 'dad-staging-infra-deploy')).toEqual({
+      StringEquals: {
+        [AUD]: 'sts.amazonaws.com',
+        [SUB]: 'repo:octo/infra:environment:staging',
+      },
+    });
+    expect(trustCondition(t, 'dad-staging-app-deploy')).toEqual({
+      StringEquals: {
+        [AUD]: 'sts.amazonaws.com',
+        [SUB]: 'repo:octo/app:environment:staging',
       },
     });
   });
@@ -52,23 +137,5 @@ describe('PipelineIamStack', () => {
         Roles: [{ Ref: Match.stringLikeRegexp('AppDeployRole') }],
       });
     }
-  });
-  it('production scopes the sub to the production GitHub Environment', () => {
-    const t = Template.fromStack(buildGraph('production').pipelineIam);
-    t.hasResourceProperties('AWS::IAM::Role', {
-      AssumeRolePolicyDocument: {
-        Statement: Match.arrayWith([
-          Match.objectLike({
-            Condition: Match.objectLike({
-              StringLike: {
-                'token.actions.githubusercontent.com:sub': Match.arrayWith([
-                  'repo:dynamicaid/dad:environment:production',
-                ]),
-              },
-            }),
-          }),
-        ]),
-      },
-    });
   });
 });

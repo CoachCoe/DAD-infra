@@ -1,7 +1,10 @@
 import { App, Stack } from 'aws-cdk-lib';
 import { Template, Match } from 'aws-cdk-lib/assertions';
+import * as iam from 'aws-cdk-lib/aws-iam';
 import {
   GitHubOidcProvider,
+  githubEnvironmentPrincipal,
+  githubEnvironmentSubject,
   githubSubjectConditions,
   scopedDeployRole,
   GITHUB_OIDC_URL,
@@ -34,6 +37,46 @@ describe('githubSubjectConditions', () => {
       'repo:CoachCoe/DAD-Main:environment:production',
       'repo:CoachCoe/DAD-Main:ref:refs/tags/*',
     ]);
+  });
+});
+
+describe('githubEnvironmentSubject', () => {
+  test('is the sub claim GitHub issues to a job under a GitHub Environment', () => {
+    expect(githubEnvironmentSubject('CoachCoe/DAD-infra', 'staging')).toBe(
+      'repo:CoachCoe/DAD-infra:environment:staging',
+    );
+    expect(githubEnvironmentSubject('CoachCoe/DAD-Main', 'production')).toBe(
+      'repo:CoachCoe/DAD-Main:environment:production',
+    );
+  });
+});
+
+describe('githubEnvironmentPrincipal', () => {
+  test('pins aud and an exact (non-wildcard) sub, with no StringLike', () => {
+    const app = new App();
+    const stack = new Stack(app, 'TestStack');
+    const oidc = new GitHubOidcProvider(stack, 'Oidc');
+    new iam.Role(stack, 'R', {
+      roleName: 'env-role',
+      assumedBy: githubEnvironmentPrincipal(oidc.provider, 'CoachCoe/DAD-infra', 'production'),
+    });
+    Template.fromStack(stack).hasResourceProperties('AWS::IAM::Role', {
+      RoleName: 'env-role',
+      AssumeRolePolicyDocument: {
+        Statement: [
+          Match.objectLike({
+            Action: 'sts:AssumeRoleWithWebIdentity',
+            Condition: {
+              StringEquals: {
+                'token.actions.githubusercontent.com:aud': OIDC_AUDIENCE,
+                'token.actions.githubusercontent.com:sub':
+                  'repo:CoachCoe/DAD-infra:environment:production',
+              },
+            },
+          }),
+        ],
+      },
+    });
   });
 });
 
