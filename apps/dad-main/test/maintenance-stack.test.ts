@@ -2,10 +2,10 @@ import { Template, Match } from 'aws-cdk-lib/assertions';
 import { buildGraph } from './helpers';
 
 describe('MaintenanceStack', () => {
-  it('defines 6 task definitions: 5 maintenance + reconcile', () => {
+  it('defines 7 task definitions: 5 maintenance + reconcile + owner bootstrap', () => {
     const t = Template.fromStack(buildGraph('staging').maintenance);
-    // migrate, provision-roles, staff, rekey, monitor, reconcile.
-    t.resourceCountIs('AWS::ECS::TaskDefinition', 6);
+    // migrate, provision-roles, staff, rekey, monitor, reconcile, bootstrap-owner.
+    t.resourceCountIs('AWS::ECS::TaskDefinition', 7);
   });
 
   it('defines the exact maintenance commands', () => {

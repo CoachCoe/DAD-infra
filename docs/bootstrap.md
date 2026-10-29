@@ -16,20 +16,14 @@ manual steps between them.
 
 ## Open blockers (resolve before the first deploy)
 
-1. **No way to create the database owner role.** Step 6 needs a SQL session as the RDS
-   master user. Nothing can open one: the master secret (`dad/<env>/rds/master`) is not
-   registered with the RDS Proxy, the database security group admits only the proxy, and
-   there is no bastion. A decision and a change are needed, for example a one-off
-   bootstrap task definition that runs the SQL below as the master user (with the master
-   secret added to the proxy, or a security-group rule from that task to the instance).
-2. **SES SMTP password.** `dad/<env>/ses/smtp` stores the IAM user's secret access key as
+1. **SES SMTP password.** `dad/<env>/ses/smtp` stores the IAM user's secret access key as
    `DONOR_SMTP_PASSWORD`. SES SMTP needs a password derived from that key (AWS documents
    the algorithm), so mail fails authentication until an operator replaces it (step 5).
    Consider generating it at deploy time instead.
-3. **Workers start as soon as the services stack is created.** The six worker task
+2. **Workers start as soon as the services stack is created.** The six worker task
    definitions set `DONOR_GO_WORKERS_ENABLED=true` and a desired count of 1, unlike
    `scripts/deploy.sh`, which starts workers only when the flag is set. If workers should
-   stay off at first, set their desired count to 0 before step 8.
+   stay off at first, set their desired count to 0 before step 7.
 
 ## Steps
 
@@ -114,28 +108,9 @@ aws secretsmanager put-secret-value --secret-id "dad/$ENV/app/stripe" \
   describes, back them up outside AWS before using them, and never rotate them
   automatically. Losing one makes the data it protects permanently unreadable.
 - **SMTP**: replace `DONOR_SMTP_PASSWORD` in `dad/$ENV/ses/smtp` with the SES SMTP password
-  derived from the stored secret access key (blocker 2).
+  derived from the stored secret access key (blocker 1).
 
-### 6. Create the database owner role
-
-Blocked (blocker 1). Once a session as the master user is possible, run, as the master
-user and with the password from `dad/$ENV/db/owner`:
-
-```sql
-CREATE ROLE owner LOGIN CREATEROLE PASSWORD '<password from dad/ENV/db/owner>';
-GRANT owner TO dad_master;
-ALTER DATABASE dad OWNER TO owner;
-```
-
-`owner` is used only by `migrate` and `provision-roles` (`DONOR_GO_DATABASE_URL`). DAD-Main
-`docs/operations.md` ("database roles") is authoritative for what it needs.
-`GRANT owner TO dad_master` is required: a master that is not a superuser (as on RDS) can
-make a role a database's owner only if it is a member of that role; without it the
-`ALTER DATABASE` fails with "must be able to SET ROLE". Checked on PostgreSQL 16 with such a
-master, including that `owner` can then create a schema, a table and a login role. Not
-run against RDS itself.
-
-### 7. Deploy the maintenance stack and prepare the database
+### 6. Deploy the maintenance stack and prepare the database
 
 ```sh
 npx cdk deploy -c env=$ENV dad-maintenance-$ENV
@@ -147,14 +122,26 @@ the `dad-ecs-cluster-$ENV` and `dad-network-$ENV` outputs:
 ```sh
 export DAD_CLUSTER=<ClusterName> DAD_SUBNETS=<ComputeSubnetIds> \
   DAD_SECURITY_GROUPS=<WorkersSecurityGroupId> AWS_REGION=us-east-2
+# Once: create the `owner` role, as the RDS master, directly against the instance.
+DAD_SECURITY_GROUPS=<BootstrapSecurityGroupId from dad-data-$ENV> \
+  scripts/run-task.sh $ENV bootstrap-owner
 scripts/run-task.sh $ENV migrate
 scripts/run-task.sh $ENV provision-roles
 ```
 
-Each waits for the task and fails unless it exits 0. Without `DAD_TASKDEFS_FILE` they run
+`bootstrap-owner` is the only task that can read the master secret, and the only thing
+besides the RDS Proxy that may reach the instance. Privileged database work is versioned
+code run as a one-off task; there is no bastion and no human database shell. It creates
+`owner` if missing, resets its password to `dad/$ENV/db/owner`, makes the master a member
+of it (a non-superuser master needs that to transfer a database), and gives it the
+`dad` database. Safe to re-run, for example after rotating the owner password. Verified on
+PostgreSQL 16 with a non-superuser master (wrong passwords rejected, the password re-synced
+on a second run, a quote in the password handled); not yet run against RDS.
+
+Each task waits and fails unless it exits 0. Without `DAD_TASKDEFS_FILE` they run
 the latest revision, which CDK just created at `$TAG`.
 
-### 8. Deploy the services and the edge
+### 7. Deploy the services and the edge
 
 ```sh
 npx cdk deploy -c env=$ENV \
@@ -164,7 +151,7 @@ npx cdk deploy -c env=$ENV \
 Point the public and staff hostnames in Cloudflare (proxied) at the NLB DNS name from the
 `dad-edge-$ENV` outputs.
 
-### 9. Configure GitHub for later deploys
+### 8. Configure GitHub for later deploys
 
 For each repository's `$ENV` GitHub Environment (already created, with branch rules):
 
@@ -177,7 +164,7 @@ For each repository's `$ENV` GitHub Environment (already created, with branch ru
 
 The pipelines skip their credentialed jobs until these are set.
 
-### 10. DAD-Quality runner (optional)
+### 9. DAD-Quality runner (optional)
 
 From `apps/atm`: `npx cdk deploy -c env=$ENV --all`, then put the provider API keys in
 `atm/$ENV/openai` and `atm/$ENV/tinker` if AI exploration is wanted. Runs start from the
@@ -186,5 +173,5 @@ nightly schedule.
 ## Not verified
 
 Nothing in this runbook has been run: no environment exists yet. In particular that
-CloudFormation can create the services in one pass once steps 3–7 are done,
+CloudFormation can create the services in one pass once steps 3–6 are done,
 and that Service Connect resolves `web` when nginx starts.

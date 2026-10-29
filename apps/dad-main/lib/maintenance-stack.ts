@@ -12,6 +12,7 @@ import * as scheduler from 'aws-cdk-lib/aws-scheduler';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import { EnvConfig } from './config';
 import { imageTagFor } from './image-tag';
+import { ownerBootstrapTaskDefinition } from './db-bootstrap';
 import {
   buildDatabaseUrl,
   PROCESS_LOGINS,
@@ -32,6 +33,10 @@ export interface MaintenanceStackProps extends cdk.StackProps {
   readonly workersSecurityGroup: ec2.ISecurityGroup;
   /** Application secrets (rekey reads the encryption keys, reconcile the Stripe key). */
   readonly appSecrets: AppSecrets;
+  /** RDS master secret (`username`, `password`); read only by the owner bootstrap task. */
+  readonly masterSecret: secretsmanager.ISecret;
+  /** RDS instance endpoint address, which the owner bootstrap connects to directly. */
+  readonly databaseHost: string;
   /** Optional existing SNS topic for alarms (else one is created). */
   readonly alarmTopic?: sns.ITopic;
 }
@@ -66,6 +71,8 @@ export class MaintenanceStack extends cdk.Stack {
       loginSecrets,
       workersSecurityGroup,
       appSecrets,
+      masterSecret,
+      databaseHost,
     } = props;
 
     const factory = new TaskFactory(this, repositories, imageTagFor(this, config));
@@ -143,6 +150,18 @@ export class MaintenanceStack extends cdk.Stack {
     );
     defineTask('monitor', ['monitor'], {
       [PROCESS_LOGINS.monitor.envVar]: dbUrl(PROCESS_LOGINS.monitor),
+    });
+
+    // --- owner bootstrap (first deploy only; see docs/bootstrap.md) -------
+    // Creates the `owner` role as the RDS master. The only task that can read the master
+    // secret; run it with the data stack's BootstrapSecurityGroupId.
+    this.taskDefinitions['bootstrap-owner'] = ownerBootstrapTaskDefinition(this, {
+      size: config.taskSizes.worker,
+      logGroup: log,
+      databaseHost,
+      databaseName: config.dbName,
+      masterSecret,
+      ownerSecret: loginSecrets[OWNER_LOGIN.login],
     });
 
     // --- reconcile task definition --------------------------------------
