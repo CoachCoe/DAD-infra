@@ -148,9 +148,12 @@ so the two tenants feel like one codebase:
   `bin/*.ts`.
 - **`aws-cdk-lib/assertions` unit tests** per stack asserting the resources that
   matter (not snapshots).
-- **GitHub OIDC, no static keys.** Per-env `infra-deploy` / `app-deploy` roles,
-  trust scoped by `sub` claim (staging ← `refs/heads/dev`, production ← the
-  `production` GitHub Environment + release tags).
+- **GitHub OIDC, no static keys.** Per-env `infra-deploy` / `app-deploy` roles. Each
+  trusts exactly one repo's GitHub Environment: `infra-deploy` ← `DAD-infra`,
+  `app-deploy` ← `DAD-Main`, with `sub = repo:<repo>:environment:<env>` (an exact
+  match). Every deploy job runs under a GitHub Environment, and GitHub then issues
+  that `sub` instead of the branch or tag form. The environments carry the
+  branch/tag restrictions (see the README).
 - **Actions pinned by full commit SHA** with `# vX.Y.Z` comments.
 - **Offline-only verification.** `npm install`, `npm run build`, `jest`,
   `cdk synth -c env=staging` and `-c env=production` with dummy account/region.

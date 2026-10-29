@@ -1,17 +1,30 @@
 import * as cdk from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 import * as iam from 'aws-cdk-lib/aws-iam';
-import { GitHubOidcProvider, githubOidcPrincipal } from '@dad-infra/pipeline-iam';
+import {
+  GitHubOidcProvider,
+  githubEnvironmentPrincipal,
+} from '@dad-infra/pipeline-iam';
 import { EnvConfig } from './config';
+
+/** The repo whose workflow runs `cdk deploy` for this app (dad-main-infra.yml). */
+export const DAD_INFRA_REPO = 'CoachCoe/DAD-infra';
+/** The repo whose workflow rolls the application out (deploy.yml). */
+export const DAD_MAIN_REPO = 'CoachCoe/DAD-Main';
 
 /** Props for {@link PipelineIamStack}. */
 export interface PipelineIamStackProps extends cdk.StackProps {
   readonly config: EnvConfig;
   /**
-   * GitHub `owner/repo` the deploy roles trust. Comes from CDK context
-   * `githubRepo`, defaulting to the DAD repo slug.
+   * GitHub `owner/repo` the infra-deploy role trusts. Falls back to CDK context
+   * `infraRepo`, then {@link DAD_INFRA_REPO}.
    */
-  readonly githubRepo?: string;
+  readonly infraRepo?: string;
+  /**
+   * GitHub `owner/repo` the app-deploy role trusts. Falls back to CDK context
+   * `appRepo`, then {@link DAD_MAIN_REPO}.
+   */
+  readonly appRepo?: string;
 }
 
 /**
@@ -23,9 +36,14 @@ export interface PipelineIamStackProps extends cdk.StackProps {
  *   - app-deploy   → builds/pushes images and runs `aws ecs update-service`
  *                    (app pipeline).
  *
- * Trust is least-privilege: the OIDC `sub` claim is pinned to the repo and the
- * branch (staging ← dev) or GitHub Environment (production). Documented as a
- * one-time per-account apply.
+ * Each role trusts a different repo, because a different repo's workflow assumes it:
+ *   - infra-deploy ← DAD-infra   (dad-main-infra.yml)
+ *   - app-deploy   ← DAD-Main    (deploy.yml)
+ * and each trusts exactly that repo's GitHub Environment (`staging` / `production`),
+ * because every deploy job runs under one and GitHub then issues
+ * `sub = repo:<repo>:environment:<env>`. Restrict which branches and tags may deploy
+ * to those environments in the repository settings. Documented as a one-time
+ * per-account apply.
  */
 export class PipelineIamStack extends cdk.Stack {
   public readonly provider: iam.OpenIdConnectProvider;
@@ -36,10 +54,14 @@ export class PipelineIamStack extends cdk.Stack {
     super(scope, id, props);
 
     const { config } = props;
-    const repo =
-      props.githubRepo ??
-      (this.node.tryGetContext('githubRepo') as string | undefined) ??
-      'dynamicaid/dad';
+    const infraRepo =
+      props.infraRepo ??
+      (this.node.tryGetContext('infraRepo') as string | undefined) ??
+      DAD_INFRA_REPO;
+    const appRepo =
+      props.appRepo ??
+      (this.node.tryGetContext('appRepo') as string | undefined) ??
+      DAD_MAIN_REPO;
 
     // The account-level OIDC provider comes from the shared package so the two
     // DAD apps (dad-main, atm) do not each mint a colliding provider. The
@@ -47,15 +69,10 @@ export class PipelineIamStack extends cdk.Stack {
     // is unchanged.
     this.provider = new GitHubOidcProvider(this, 'GitHubOidc').provider;
 
-    // Staging is gated by the `dev` branch; production by the GitHub
-    // Environment of the same name (via the `environment:<name>` sub claim).
-    // The shared helper yields the exact same aud/sub trust conditions.
-    const principal = githubOidcPrincipal(this.provider, repo, config.env);
-
     // infra-deploy: allowed to assume the CDK bootstrap roles for cdk deploy.
     this.infraDeployRole = new iam.Role(this, 'InfraDeployRole', {
       roleName: `dad-${config.env}-infra-deploy`,
-      assumedBy: principal,
+      assumedBy: githubEnvironmentPrincipal(this.provider, infraRepo, config.env),
       description: `GitHub OIDC infra (cdk deploy) role for ${config.env}.`,
       maxSessionDuration: cdk.Duration.hours(1),
     });
@@ -75,7 +92,7 @@ export class PipelineIamStack extends cdk.Stack {
     // app-deploy: build/push images to ECR + direct ECS deploy (scripts/deploy.sh).
     this.appDeployRole = new iam.Role(this, 'AppDeployRole', {
       roleName: `dad-${config.env}-app-deploy`,
-      assumedBy: principal,
+      assumedBy: githubEnvironmentPrincipal(this.provider, appRepo, config.env),
       description: `GitHub OIDC app (ECR push + ecs update-service) role for ${config.env}.`,
       maxSessionDuration: cdk.Duration.hours(1),
     });

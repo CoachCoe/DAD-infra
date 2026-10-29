@@ -67,8 +67,50 @@ export function githubSubjectConditions(
 }
 
 /**
+ * The `sub` claim GitHub issues to a job that runs under a GitHub Environment:
+ * `repo:<owner>/<repo>:environment:<name>`.
+ *
+ * When a job sets `environment:`, GitHub uses this form and NOT the branch or tag
+ * form, so a role that must be assumed by such a job has to trust this exact value.
+ * The GitHub Environment names are `staging` and `production`, matching the CDK
+ * env names.
+ */
+export function githubEnvironmentSubject(
+  repo: string,
+  env: 'staging' | 'production',
+): string {
+  return `repo:${repo}:environment:${env}`;
+}
+
+/**
+ * Build an {@link iam.OpenIdConnectPrincipal} that trusts exactly one repo's GitHub
+ * Environment: `aud` pinned to STS and `sub` an exact match (no wildcards) on
+ * {@link githubEnvironmentSubject}.
+ *
+ * The trust is only as narrow as the GitHub Environment itself. Any job in `repo`
+ * that runs under this environment can assume the role, so restrict which branches
+ * and tags may deploy to the environment in the repository settings.
+ */
+export function githubEnvironmentPrincipal(
+  provider: iam.IOpenIdConnectProvider,
+  repo: string,
+  env: 'staging' | 'production',
+): iam.OpenIdConnectPrincipal {
+  return new iam.OpenIdConnectPrincipal(provider, {
+    StringEquals: {
+      [`${GITHUB_OIDC_HOST}:aud`]: OIDC_AUDIENCE,
+      [`${GITHUB_OIDC_HOST}:sub`]: githubEnvironmentSubject(repo, env),
+    },
+  });
+}
+
+/**
  * Build an {@link iam.OpenIdConnectPrincipal} for the given provider, repo, and
  * env, with the `aud` pinned to STS and the `sub` pinned to the env's subjects.
+ *
+ * This is the branch/tag form (staging ← `dev`, production ← environment + tags).
+ * It only matches jobs that do NOT run under a GitHub Environment for staging; for
+ * jobs that do, use {@link githubEnvironmentPrincipal}.
  */
 export function githubOidcPrincipal(
   provider: iam.IOpenIdConnectProvider,
