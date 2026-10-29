@@ -136,6 +136,17 @@ export class PipelineIamStack extends cdk.Stack {
         },
       }),
     );
+    // After a successful rollout, deploy.yml records the release's image tag here so that
+    // CDK (lib/image-tag.ts) always builds task definitions from the last good release.
+    this.appDeployRole.addToPolicy(
+      new iam.PolicyStatement({
+        sid: 'RecordImageTag',
+        actions: ['ssm:PutParameter'],
+        resources: [
+          `arn:aws:ssm:${config.region}:${config.account}:parameter/dad/${config.env}/image-tag`,
+        ],
+      }),
+    );
     // DAD-Main's deploy.yml registers a task-definition revision per family pinned to the
     // release's image tag (scripts/ecs-pin-image.sh), copying the family's tags onto it.
     // Registering a revision WITH tags needs ecs:TagResource on the new revision.

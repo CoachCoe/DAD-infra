@@ -11,6 +11,7 @@ import * as cwActions from 'aws-cdk-lib/aws-cloudwatch-actions';
 import * as scheduler from 'aws-cdk-lib/aws-scheduler';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import { EnvConfig } from './config';
+import { imageTagFor } from './image-tag';
 import {
   buildDatabaseUrl,
   PROCESS_LOGINS,
@@ -64,7 +65,7 @@ export class MaintenanceStack extends cdk.Stack {
       workersSecurityGroup,
     } = props;
 
-    const factory = new TaskFactory(this, repositories);
+    const factory = new TaskFactory(this, repositories, imageTagFor(this, config));
     this.taskDefinitions = {};
 
     const log = new logs.LogGroup(this, 'MaintenanceLogs', {

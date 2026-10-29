@@ -138,6 +138,27 @@ describe('PipelineIamStack', () => {
     }
   });
 
+  it('lets app-deploy record the deployed image tag in exactly this env\'s SSM parameter', () => {
+    for (const [env, account] of [
+      ['staging', '853377042897'],
+      ['production', '216833405626'],
+    ] as const) {
+      const t = Template.fromStack(buildGraph(env).pipelineIam);
+      t.hasResourceProperties('AWS::IAM::Policy', {
+        PolicyDocument: {
+          Statement: Match.arrayWith([
+            Match.objectLike({
+              Sid: 'RecordImageTag',
+              Effect: 'Allow',
+              Action: 'ssm:PutParameter',
+              Resource: `arn:aws:ssm:us-east-2:${account}:parameter/dad/${env}/image-tag`,
+            }),
+          ]),
+        },
+      });
+    }
+  });
+
   it('lets app-deploy tag only this env\'s dad-* task definition revisions it registers', () => {
     for (const [env, account] of [
       ['staging', '853377042897'],

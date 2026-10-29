@@ -14,7 +14,7 @@ export interface TaskDefinitionSpec {
   readonly id: string;
   /** The image repository to pull from (dad/api, dad/web, dad/nginx). */
   readonly image: ImageName;
-  /** Optional image tag; defaults to 'latest' for offline synth. */
+  /** Optional image tag; defaults to the factory's default tag. */
   readonly imageTag?: string;
   /** Fargate CPU/memory sizing. */
   readonly size: TaskSize;
@@ -54,6 +54,12 @@ export class TaskFactory {
   constructor(
     private readonly scope: Construct,
     private readonly repositories: Record<ImageName, ecr.IRepository>,
+    /**
+     * Tag used for every image that does not set its own. The stacks pass the
+     * SSM-backed last-deployed tag (see image-tag.ts); `latest` is only a fallback
+     * for callers that do not care.
+     */
+    private readonly defaultImageTag: string = 'latest',
   ) {}
 
   /** Build a Fargate task definition with a single primary container. */
@@ -74,7 +80,7 @@ export class TaskFactory {
     const container = taskDefinition.addContainer(`${spec.id}-Container`, {
       image: ecs.ContainerImage.fromEcrRepository(
         this.repositories[spec.image],
-        spec.imageTag ?? 'latest',
+        spec.imageTag ?? this.defaultImageTag,
       ),
       command: spec.command,
       environment: spec.environment,
