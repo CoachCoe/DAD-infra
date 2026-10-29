@@ -117,6 +117,7 @@ export class PipelineIamStack extends cdk.Stack {
         actions: [
           'ecs:UpdateService',
           'ecs:DescribeServices',
+          'ecs:DescribeTaskDefinition',
           'ecs:RegisterTaskDefinition',
           'ecs:RunTask',
           'ecs:DescribeTasks',
@@ -133,6 +134,18 @@ export class PipelineIamStack extends cdk.Stack {
         conditions: {
           StringEquals: { 'iam:PassedToService': 'ecs-tasks.amazonaws.com' },
         },
+      }),
+    );
+    // DAD-Main's deploy.yml registers a task-definition revision per family pinned to the
+    // release's image tag (scripts/ecs-pin-image.sh), copying the family's tags onto it.
+    // Registering a revision WITH tags needs ecs:TagResource on the new revision.
+    this.appDeployRole.addToPolicy(
+      new iam.PolicyStatement({
+        sid: 'TagPinnedTaskDefinitions',
+        actions: ['ecs:TagResource'],
+        resources: [
+          `arn:aws:ecs:${config.region}:${config.account}:task-definition/dad-*:*`,
+        ],
       }),
     );
     // DAD-Main's deploy.yml resolves the cluster, compute subnets, and workers

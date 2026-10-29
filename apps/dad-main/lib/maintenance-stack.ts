@@ -157,6 +157,25 @@ export class MaintenanceStack extends cdk.Stack {
       assumedBy: new iam.ServicePrincipal('scheduler.amazonaws.com'),
     });
     reconcileTask.grantRun(schedulerRole);
+    // The schedule targets the task-definition FAMILY (an ARN with no revision), which
+    // ECS resolves to the latest ACTIVE revision when it runs the task. DAD-Main's
+    // pipeline registers a new revision pinned to each release's image tag, so a fixed
+    // revision here would keep running the CDK-created one with the placeholder image.
+    // `grantRun` above covers only that fixed revision, so also allow every revision of
+    // this family on this cluster.
+    const reconcileFamilyArn = cdk.Stack.of(this).formatArn({
+      service: 'ecs',
+      resource: 'task-definition',
+      resourceName: reconcileTask.family,
+    });
+    schedulerRole.addToPolicy(
+      new iam.PolicyStatement({
+        sid: 'RunLatestReconcileRevision',
+        actions: ['ecs:RunTask'],
+        resources: [`${reconcileFamilyArn}:*`],
+        conditions: { ArnEquals: { 'ecs:cluster': cluster.clusterArn } },
+      }),
+    );
 
     const subnets = vpc.selectSubnets(computeSubnets);
 
@@ -173,7 +192,7 @@ export class MaintenanceStack extends cdk.Stack {
           arn: cluster.clusterArn,
           roleArn: schedulerRole.roleArn,
           ecsParameters: {
-            taskDefinitionArn: reconcileTask.taskDefinitionArn,
+            taskDefinitionArn: reconcileFamilyArn,
             launchType: 'FARGATE',
             taskCount: 1,
             networkConfiguration: {
