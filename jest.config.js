@@ -10,6 +10,7 @@ module.exports = {
     '<rootDir>/packages/config',
     '<rootDir>/packages/pipeline-iam',
     '<rootDir>/apps/atm',
+    '<rootDir>/apps/dad-main',
   ],
   modulePathIgnorePatterns: ['<rootDir>/.*/dist/'],
 };
