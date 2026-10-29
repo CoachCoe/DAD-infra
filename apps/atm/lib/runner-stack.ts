@@ -1,0 +1,206 @@
+import * as cdk from 'aws-cdk-lib';
+import { Construct } from 'constructs';
+import * as codebuild from 'aws-cdk-lib/aws-codebuild';
+import * as iam from 'aws-cdk-lib/aws-iam';
+import * as logs from 'aws-cdk-lib/aws-logs';
+import * as s3 from 'aws-cdk-lib/aws-s3';
+import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
+import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
+import { AtmEnvConfig } from './atm-config';
+import { BY_STATUS_INDEX } from './ledger-stack';
+
+/**
+ * Name of the StartBuild-injected environment variable that carries the
+ * short-lived GitHub App installation token used to clone DAD-Main at the
+ * dispatched SHA. DAD-Main CI supplies the value per build; the project
+ * definition holds only this placeholder, never a stored credential.
+ */
+export const GITHUB_TOKEN_ENV_VAR = 'GITHUB_APP_TOKEN';
+
+/** Props for {@link RunnerStack}. */
+export interface RunnerStackProps extends cdk.StackProps {
+  readonly config: AtmEnvConfig;
+  /** The evidence bucket the runner writes artifacts into. */
+  readonly evidenceBucket: s3.IBucket;
+  /** The findings ledger table the runner reconciles into. */
+  readonly findingsTable: dynamodb.ITable;
+  /** The provider API-key secrets the runner may read when AI is enabled. */
+  readonly secrets: secretsmanager.ISecret[];
+}
+
+/**
+ * RunnerStack (PLAN item 1.5).
+ *
+ * The CodeBuild project `atm-runner-<env>` that runs an ATM acceptance pass.
+ * Privileged (Docker-in-Docker) so ATM can build DAD-Main images and drive a
+ * real browser. Source is the DAD-Main GitHub repo; the clone authenticates
+ * with a short-lived GitHub App token injected via the StartBuild environment
+ * (modelled here as a placeholder env var), so the project owns no stored
+ * GitHub credential.
+ *
+ * The service role is least-privilege: read only the `atm/<env>/*` secrets,
+ * read/write only this env's evidence bucket, read + conditional-write only
+ * this env's findings table and its GSI, and write only its own log group.
+ * No `Resource: "*"` on S3, DynamoDB, or Secrets Manager.
+ */
+export class RunnerStack extends cdk.Stack {
+  public readonly project: codebuild.Project;
+  public readonly logGroup: logs.LogGroup;
+
+  constructor(scope: Construct, id: string, props: RunnerStackProps) {
+    super(scope, id, props);
+
+    const { config, evidenceBucket, findingsTable, secrets } = props;
+    const projectName = `${config.prefix}-runner-${config.env}`;
+
+    this.logGroup = new logs.LogGroup(this, 'RunnerLogs', {
+      logGroupName: `/aws/codebuild/${projectName}`,
+      retention: logRetention(config.logRetentionDays),
+      removalPolicy: config.deletionProtection
+        ? cdk.RemovalPolicy.RETAIN
+        : cdk.RemovalPolicy.DESTROY,
+    });
+
+    // Least-privilege service role: no managed policies, explicit statements only.
+    const role = new iam.Role(this, 'RunnerServiceRole', {
+      roleName: `${projectName}-service`,
+      assumedBy: new iam.ServicePrincipal('codebuild.amazonaws.com'),
+      description: `Least-privilege service role for ${projectName}.`,
+    });
+
+    // Own log group only.
+    role.addToPolicy(
+      new iam.PolicyStatement({
+        sid: 'OwnLogGroup',
+        actions: [
+          'logs:CreateLogStream',
+          'logs:PutLogEvents',
+          'logs:CreateLogGroup',
+        ],
+        resources: [
+          this.logGroup.logGroupArn,
+          `${this.logGroup.logGroupArn}:*`,
+        ],
+      }),
+    );
+
+    // Read only the atm/<env>/* provider secrets.
+    role.addToPolicy(
+      new iam.PolicyStatement({
+        sid: 'ReadProviderSecrets',
+        actions: ['secretsmanager:GetSecretValue', 'secretsmanager:DescribeSecret'],
+        resources: secrets.map((s) => s.secretArn),
+      }),
+    );
+
+    // Read/write only this env's evidence bucket (objects + bucket listing).
+    role.addToPolicy(
+      new iam.PolicyStatement({
+        sid: 'EvidenceObjects',
+        actions: [
+          's3:GetObject',
+          's3:PutObject',
+          's3:AbortMultipartUpload',
+          's3:ListMultipartUploadParts',
+        ],
+        resources: [evidenceBucket.arnForObjects('*')],
+      }),
+    );
+    role.addToPolicy(
+      new iam.PolicyStatement({
+        sid: 'EvidenceBucket',
+        actions: ['s3:ListBucket', 's3:GetBucketLocation'],
+        resources: [evidenceBucket.bucketArn],
+      }),
+    );
+
+    // Read + conditional-write only this env's findings table and its GSI.
+    role.addToPolicy(
+      new iam.PolicyStatement({
+        sid: 'FindingsLedger',
+        actions: [
+          'dynamodb:GetItem',
+          'dynamodb:BatchGetItem',
+          'dynamodb:Query',
+          'dynamodb:PutItem',
+          'dynamodb:UpdateItem',
+          'dynamodb:DeleteItem',
+          'dynamodb:ConditionCheckItem',
+        ],
+        resources: [
+          findingsTable.tableArn,
+          `${findingsTable.tableArn}/index/${BY_STATUS_INDEX}`,
+        ],
+      }),
+    );
+
+    // GitHub App installation token: injected per build by DAD-Main CI's
+    // StartBuild call. The project carries only a placeholder; no stored
+    // CodeBuild GitHub connection.
+    const environmentVariables: Record<string, codebuild.BuildEnvironmentVariable> = {
+      [GITHUB_TOKEN_ENV_VAR]: {
+        type: codebuild.BuildEnvironmentVariableType.PLAINTEXT,
+        value: '',
+      },
+      ATM_ENV: {
+        type: codebuild.BuildEnvironmentVariableType.PLAINTEXT,
+        value: config.env,
+      },
+      ATM_EVIDENCE_BUCKET: {
+        type: codebuild.BuildEnvironmentVariableType.PLAINTEXT,
+        value: evidenceBucket.bucketName,
+      },
+      ATM_FINDINGS_TABLE: {
+        type: codebuild.BuildEnvironmentVariableType.PLAINTEXT,
+        value: findingsTable.tableName,
+      },
+    };
+
+    this.project = new codebuild.Project(this, 'RunnerProject', {
+      projectName,
+      role,
+      // DAD-Main repo; cloned at --source-version <sha> supplied by StartBuild.
+      // Authentication uses the injected token (buildspec), not a stored creds.
+      source: codebuild.Source.gitHub({
+        owner: config.githubRepo.split('/')[0],
+        repo: config.githubRepo.split('/')[1],
+        // No webhook: runs are started explicitly via StartBuild (trigger stack).
+      }),
+      environment: {
+        buildImage: codebuild.LinuxBuildImage.STANDARD_7_0,
+        computeType: config.computeType,
+        privileged: true,
+      },
+      environmentVariables,
+      timeout: config.buildTimeout,
+      logging: {
+        cloudWatch: {
+          logGroup: this.logGroup,
+        },
+      },
+    });
+
+    new cdk.CfnOutput(this, 'RunnerProjectName', {
+      value: this.project.projectName,
+      description: 'ATM CodeBuild runner project name.',
+    });
+    new cdk.CfnOutput(this, 'RunnerProjectArn', {
+      value: this.project.projectArn,
+      description: 'ATM CodeBuild runner project ARN.',
+    });
+  }
+}
+
+/** Map a retention-day count to the matching CloudWatch RetentionDays enum. */
+function logRetention(days: number): logs.RetentionDays {
+  switch (days) {
+    case 30:
+      return logs.RetentionDays.ONE_MONTH;
+    case 90:
+      return logs.RetentionDays.THREE_MONTHS;
+    case 365:
+      return logs.RetentionDays.ONE_YEAR;
+    default:
+      return logs.RetentionDays.ONE_MONTH;
+  }
+}

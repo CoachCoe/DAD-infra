@@ -1,0 +1,29 @@
+{
+  "name": "@dad-infra/atm",
+  "version": "0.1.0",
+  "private": true,
+  "description": "DAD-Quality (atm) AWS CDK app: CodeBuild runner, S3 evidence, DynamoDB ledger, Secrets, triggers.",
+  "bin": {
+    "atm-infra": "bin/atm-infra.ts"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "jest",
+    "synth": "cdk synth"
+  },
+  "dependencies": {
+    "@dad-infra/config": "0.1.0",
+    "@dad-infra/pipeline-iam": "0.1.0",
+    "aws-cdk-lib": "2.275.0",
+    "constructs": "10.8.1"
+  },
+  "devDependencies": {
+    "@types/jest": "29.5.14",
+    "@types/node": "22.20.5",
+    "aws-cdk": "2.1146.1",
+    "jest": "29.7.0",
+    "ts-jest": "29.4.15",
+    "ts-node": "10.9.2",
+    "typescript": "5.9.3"
+  }
+}
