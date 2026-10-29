@@ -1,5 +1,5 @@
 import * as cdk from 'aws-cdk-lib';
-import { getConfig, EnvName } from '../lib/config';
+import { getConfig, EnvConfig, EnvName } from '../lib/config';
 import { NetworkStack } from '../lib/network-stack';
 import { DataStack } from '../lib/data-stack';
 import { EcsClusterStack } from '../lib/ecs-cluster-stack';
@@ -14,9 +14,9 @@ import { PipelineIamStack } from '../lib/pipeline-iam-stack';
 const ENV = { account: '111111111111', region: 'us-east-2' };
 
 /** Build the full stack graph for an env, returning each stack for assertions. */
-export function buildGraph(name: EnvName = 'staging') {
+export function buildGraph(name: EnvName = 'staging', overrides: Partial<EnvConfig> = {}) {
   const app = new cdk.App();
-  const config = getConfig(name);
+  const config: EnvConfig = { ...getConfig(name), ...overrides };
 
   const network = new NetworkStack(app, `dad-network-${name}`, {
     env: ENV,

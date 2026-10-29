@@ -295,6 +295,8 @@ export class ServicesStack extends cdk.Stack {
     for (const w of workers) {
       const login = PROCESS_LOGINS[w.processId];
       const environment: Record<string, string> = {
+        // The worker binary refuses to start without this; whether workers run at all
+        // is config.workersEnabled (their desired count).
         DONOR_GO_WORKERS_ENABLED: 'true',
         [login.envVar]: dbUrl(w.processId),
       };
@@ -326,7 +328,8 @@ export class ServicesStack extends cdk.Stack {
           cluster,
           serviceName: w.service,
           taskDefinition: built.taskDefinition,
-          desiredCount: config.desiredCounts.workers,
+          // The single worker switch (config.workersEnabled); see EnvConfig.
+          desiredCount: config.workersEnabled ? config.desiredCounts.workers : 0,
           vpcSubnets: computeSubnets,
           securityGroups: [workersSecurityGroup],
         },

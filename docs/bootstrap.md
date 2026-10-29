@@ -20,10 +20,6 @@ manual steps between them.
    `DONOR_SMTP_PASSWORD`. SES SMTP needs a password derived from that key (AWS documents
    the algorithm), so mail fails authentication until an operator replaces it (step 5).
    Consider generating it at deploy time instead.
-2. **Workers start as soon as the services stack is created.** The six worker task
-   definitions set `DONOR_GO_WORKERS_ENABLED=true` and a desired count of 1, unlike
-   `scripts/deploy.sh`, which starts workers only when the flag is set. If workers should
-   stay off at first, set their desired count to 0 before step 7.
 
 ## Steps
 
@@ -160,9 +156,16 @@ For each repository's `$ENV` GitHub Environment (already created, with branch ru
 | CoachCoe/DAD-infra | `INFRA_DEPLOY_ROLE_ARN` | `InfraDeployRoleArn` output of `dad-pipeline-iam-$ENV` |
 | CoachCoe/DAD-Main | `APP_DEPLOY_ROLE_ARN` | `AppDeployRoleArn` output of `dad-pipeline-iam-$ENV` |
 | CoachCoe/DAD-Main | `DONOR_PUBLIC_ORIGIN`, `DONOR_STAFF_ORIGIN` | the environment's origins |
-| CoachCoe/DAD-Main | `DONOR_GO_WORKERS_ENABLED` | `true` to have deploys roll the workers |
 
 The pipelines skip their credentialed jobs until these are set.
+
+### Turning the workers on
+
+Workers are off in every environment until `workersEnabled` is set to `true` in
+`apps/dad-main/lib/config.ts` and the services stack is deployed. That setting is the one
+switch: it sets their desired count, and DAD-Main's `deploy.yml` rolls only services ECS
+reports as running. Turn them on once mail (SES out of sandbox, a working SMTP password)
+and, if used, Stripe are configured.
 
 ### 9. DAD-Quality runner (optional)
 

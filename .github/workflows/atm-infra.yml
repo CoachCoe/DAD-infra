@@ -10,7 +10,7 @@ name: ATM Infra (CDK)
 #                              -> offline `cdk synth` of BOTH envs (no AWS creds).
 #                                 This is the real PR signal.
 #   - push to dev              -> `cdk deploy -c env=staging`  (sandbox 853377042897).
-#   - release tag / push main  -> `cdk deploy -c env=production` (216833405626),
+#   - push to main             -> `cdk deploy -c env=production` (216833405626),
 #                                 gated by the `production` GitHub Environment
 #                                 (configure a manual-approval protection rule there).
 #
@@ -32,8 +32,6 @@ on:
       - "apps/atm/**"
       - "packages/**"
       - ".github/workflows/atm-infra.yml"
-  release:
-    types: [published]
   workflow_dispatch:
     inputs:
       env:
@@ -117,8 +115,7 @@ jobs:
   deploy-production:
     if: >-
       vars.INFRA_DEPLOY_ROLE_ARN != '' &&
-      ((github.event_name == 'release' && github.event.action == 'published') ||
-      (github.event_name == 'push' && github.ref == 'refs/heads/main'))
+      github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     environment: production
