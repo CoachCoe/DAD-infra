@@ -76,6 +76,12 @@ export class ServicesStack extends cdk.Stack {
     const factory = new TaskFactory(this, repositories);
     this.services = {} as Record<ServiceName, ecs.FargateService>;
 
+    // A rollout that cannot reach a steady state (tasks failing to start or failing
+    // their health check) is stopped and rolled back to the last good task definition.
+    // DAD-Main's deploy.yml then sees the new deployment end as FAILED rather than
+    // COMPLETED, which is its deploy gate (no shell into running tasks needed).
+    const rollout = { circuitBreaker: { rollback: true } };
+
     // Build a per-process DB URL from the login secret's password field.
     // The URL is a plain env var (as in Compose); the password resolves at
     // deploy time via a {{resolve:secretsmanager:...}} dynamic reference.
@@ -107,9 +113,21 @@ export class ServicesStack extends cdk.Stack {
         DONOR_API_DATABASE_URL: dbUrl('api'),
       },
       portMappings: [{ containerPort: 8002, name: 'api' }],
+      // Same probe as docker-compose.prod.yml. Liveness, not readiness: /health/ready
+      // checks migration history through PostgreSQL, so a database outage would fail
+      // every task's health check and ECS would replace them all in a loop. `migrate`
+      // runs before the rollout and already proves database connectivity.
+      healthCheck: {
+        command: ['CMD', 'wget', '-q', '-O', '/dev/null', 'http://127.0.0.1:8002/health/live'],
+        interval: cdk.Duration.seconds(10),
+        timeout: cdk.Duration.seconds(5),
+        retries: 10,
+        startPeriod: cdk.Duration.seconds(30),
+      },
       logGroup: logGroups.api,
     });
     this.services.api = new ecs.FargateService(this, 'ApiService', {
+      ...rollout,
       cluster,
       serviceName: 'api',
       taskDefinition: api.taskDefinition,
@@ -140,9 +158,23 @@ export class ServicesStack extends cdk.Stack {
         DONOR_CLIENT_IP_HEADER: 'X-Real-IP',
       },
       portMappings: [{ containerPort: 3000, name: 'web' }],
+      // Same probe as the web Dockerfile HEALTHCHECK, which ECS ignores.
+      healthCheck: {
+        command: [
+          'CMD',
+          'node',
+          '-e',
+          "require('http').get('http://127.0.0.1:3000/',r=>process.exit(r.statusCode<500?0:1)).on('error',()=>process.exit(1))",
+        ],
+        interval: cdk.Duration.seconds(15),
+        timeout: cdk.Duration.seconds(5),
+        retries: 5,
+        startPeriod: cdk.Duration.seconds(20),
+      },
       logGroup: logGroups.web,
     });
     this.services.web = new ecs.FargateService(this, 'WebService', {
+      ...rollout,
       cluster,
       serviceName: 'web',
       taskDefinition: web.taskDefinition,
@@ -170,9 +202,18 @@ export class ServicesStack extends cdk.Stack {
         { containerPort: 8443, name: 'https' },
         { containerPort: 8081, name: 'health' },
       ],
+      // Same probe as docker-compose.prod.yml (the NLB target group also checks :8081).
+      healthCheck: {
+        command: ['CMD', 'wget', '-q', '-O', '/dev/null', 'http://127.0.0.1:8081/health'],
+        interval: cdk.Duration.seconds(10),
+        timeout: cdk.Duration.seconds(5),
+        retries: 5,
+        startPeriod: cdk.Duration.seconds(20),
+      },
       logGroup: logGroups.nginx,
     });
     this.services.nginx = new ecs.FargateService(this, 'NginxService', {
+      ...rollout,
       cluster,
       serviceName: 'nginx',
       taskDefinition: nginx.taskDefinition,
@@ -247,6 +288,7 @@ export class ServicesStack extends cdk.Stack {
         this,
         `${w.service}-Service`,
         {
+          ...rollout,
           cluster,
           serviceName: w.service,
           taskDefinition: built.taskDefinition,
