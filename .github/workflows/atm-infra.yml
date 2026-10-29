@@ -72,6 +72,9 @@ jobs:
           cache-dependency-path: package-lock.json
       - run: npm ci
       - run: npm run build
+      # Unit tests for every workspace, including the SMTP rotation function's Python
+      # tests (run by jest). Part of the required `synth` check.
+      - run: npx jest --ci
       # Offline validation: synth both environments with dummy account/region.
       # This is the real PR signal and needs no AWS credentials.
       - name: cdk synth (staging + production, offline)
