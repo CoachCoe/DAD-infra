@@ -3,10 +3,6 @@ import { Construct } from 'constructs';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as scheduler from 'aws-cdk-lib/aws-scheduler';
 import * as codebuild from 'aws-cdk-lib/aws-codebuild';
-import {
-  GitHubOidcProvider,
-  scopedDeployRole,
-} from '@dad-infra/pipeline-iam';
 import { AtmEnvConfig } from './atm-config';
 
 /** Props for {@link TriggerStack}. */
@@ -21,17 +17,18 @@ export interface TriggerStackProps extends cdk.StackProps {
 /**
  * TriggerStack (PLAN item 1.6).
  *
- * Two ways to start an ATM run:
- *   1. EventBridge Scheduler — nightly/periodic runs. A scheduler-assumed role
- *      is scoped to `codebuild:StartBuild` on exactly this project.
- *   2. GitHub OIDC deploy role — DAD-Main CI assumes it on push/dispatch and is
- *      permitted ONLY `codebuild:StartBuild` on this project. Trust subject is
- *      scoped to the DAD-Main repo + the per-env branch/environment.
+ * Runs are started by EventBridge Scheduler (nightly/periodic). The scheduler's role
+ * is scoped to `codebuild:StartBuild` on exactly this project. No AWS-side webhook or
+ * public ingress.
  *
- * No AWS-side webhook or public ingress.
+ * There is deliberately NO GitHub OIDC role for DAD-Main CI to start a run. DAD-Main
+ * already has an ATM acceptance gate (atm.yml) with its own durable findings ledger,
+ * and how AWS runs relate to that gate is undecided. Wiring CI to this runner before
+ * that is settled would create a second, disconnected source of findings. This stack
+ * also must not create a GitHub OIDC provider: an account holds only one, and
+ * `apps/dad-main`'s pipeline-iam stack owns it.
  */
 export class TriggerStack extends cdk.Stack {
-  public readonly oidcStartBuildRole: iam.Role;
   public readonly schedulerRole: iam.Role;
 
   constructor(scope: Construct, id: string, props: TriggerStackProps) {
@@ -39,7 +36,6 @@ export class TriggerStack extends cdk.Stack {
 
     const { config, project } = props;
 
-    // --- EventBridge Scheduler: nightly/periodic runs -----------------------
     this.schedulerRole = new iam.Role(this, 'SchedulerRole', {
       roleName: `${config.prefix}-scheduler-${config.env}`,
       assumedBy: new iam.ServicePrincipal('scheduler.amazonaws.com'),
@@ -63,30 +59,9 @@ export class TriggerStack extends cdk.Stack {
       },
     });
 
-    // --- GitHub OIDC role assumed by DAD-Main CI to start a run -------------
-    const oidc = new GitHubOidcProvider(this, 'GitHubOidc');
-    this.oidcStartBuildRole = scopedDeployRole(this, 'DadMainStartBuildRole', {
-      provider: oidc.provider,
-      repo: config.githubRepo,
-      env: config.env,
-      roleName: `${config.prefix}-startbuild-${config.env}`,
-      description: `DAD-Main CI OIDC role: StartBuild on ${config.prefix}-runner-${config.env} only.`,
-    });
-    this.oidcStartBuildRole.addToPolicy(
-      new iam.PolicyStatement({
-        sid: 'StartRunnerBuild',
-        actions: ['codebuild:StartBuild'],
-        resources: [project.projectArn],
-      }),
-    );
-
-    new cdk.CfnOutput(this, 'StartBuildRoleArn', {
-      value: this.oidcStartBuildRole.roleArn,
-      description: 'OIDC role ARN DAD-Main CI assumes to start an ATM run.',
-    });
     new cdk.CfnOutput(this, 'RunnerProjectName', {
       value: project.projectName,
-      description: 'ATM CodeBuild runner project name the triggers target.',
+      description: 'ATM CodeBuild runner project name the schedule targets.',
     });
   }
 }

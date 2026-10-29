@@ -199,61 +199,55 @@ not mistaken for inconsistency.
 - **Secrets Manager**: `OPENAI_API_KEY` / `TINKER_API_KEY`, injected into the
   CodeBuild environment **only** when AI exploration is explicitly enabled. Never
   passed to the application containers (ATM already guards this locally).
-- **Triggers**: DAD-Main's own GitHub CI dispatches the commit-driven run
-  (§6.5); EventBridge Scheduler covers nightly/periodic runs; manual start via
-  console / CLI / workflow dispatch.
+- **Triggers**: EventBridge Scheduler (nightly/periodic) and manual start via console
+  / CLI. DAD-Main's CI does not start runs yet (§6.5).
 - **IAM**: a CodeBuild service role scoped to read its secrets, write the S3
   bucket prefix, and read/conditional-write the DynamoDB table — nothing else.
-  A GitHub OIDC role in each account is allowed only `codebuild:StartBuild` on the
-  project (§6.5).
+  The scheduler's role is allowed only `codebuild:StartBuild` on the project.
 
-### 6.5 Trigger and source acquisition — GitHub CI dispatch, CodeBuild clone at SHA
+### 6.5 Trigger and source acquisition — scheduled runs; CI-triggered runs deferred
 
-**Decision: DAD-Main's GitHub CI dispatches each commit-driven run; CodeBuild
-clones DAD-Main itself at the dispatched SHA via GitHub OIDC; EventBridge Scheduler
-covers scheduled/manual runs.** No AWS-side webhook or public ingress.
+**Decision: v1 runs are started by EventBridge Scheduler. Nothing in DAD-Main's CI
+starts them.** No AWS-side webhook or public ingress.
 
-Rationale:
+**Source acquisition:** the runner clones DAD-Main itself; the buildspec checks out the
+revision under validation (`--source-version` from `StartBuild`, otherwise the default
+branch). DAD-Main is a public repository, so a scheduled run clones anonymously. A caller
+of `StartBuild` may supply `GITHUB_APP_TOKEN` to authenticate the clone. This breaks
+for scheduled runs if DAD-Main ever becomes private; a stored read-only credential would
+then be needed. (Not verified: that CodeBuild's own GitHub source needs no credential for
+a public repository.) Rejected alternative: DAD-Main CI builds a source archive and hands
+it to ATM. ATM already resolves and archives committed source itself, so that would
+duplicate or bypass it.
 
-- **Revision provenance.** ATM validates committed source pinned to a SHA. The
-  system that already knows the exact SHA and gates on it is DAD-Main's CI. Having
-  that CI start the run with the SHA passed explicitly keeps the thing being
-  validated and the trigger on the same source of truth. An AWS-side webhook that
-  re-resolves "latest on dev" reintroduces a which-commit race ATM is designed to
-  avoid.
-- **Matches the existing OIDC contract.** DAD-Main's infra already uses GitHub
-  OIDC → AWS with per-env roles. "On push to dev, assume an OIDC role and
-  `aws codebuild start-build --source-version <sha>`" is one more OIDC-gated call,
-  not a new ingress surface.
-- **Least standing infra.** The webhook path needs a public endpoint, signature
-  verification, and a translator Lambda. The CI-dispatch path needs none of that.
+**Why CI-triggered runs are deferred.** An earlier revision of this document had DAD-Main's
+CI start each commit-driven run through a `codebuild:StartBuild` OIDC role. That was
+removed because DAD-Main already has an ATM acceptance gate (`atm.yml`) with its own
+durable findings ledger (a Cloudflare Worker, `apps/atm-ledger`), and that installation
+is documented as authoritative. A CI-started AWS run would write to the DynamoDB ledger
+(§6.3), which that gate never reads, so findings would live in two disconnected places.
+Settle first whether AWS runs *complement* the gate (nightly and heavier runs, their own
+ledger) or *integrate* with the Worker ledger. Then wire CI:
 
-**Source acquisition:** CodeBuild clones DAD-Main at the dispatched SHA via GitHub
-OIDC (CodeBuild native GitHub source, or a short-lived GitHub App token). Rejected
-alternative for v1: DAD-Main CI builds a source archive and hands it to ATM — ATM
-already does its own SHA resolution and archiving ("only committed source is
-archived"), so a pre-built archive would duplicate or bypass that logic. Give ATM
-the repo + revision and let it clone and archive.
+- a DAD-Main workflow job that assumes a `StartBuild` role. If the job runs under a
+  GitHub Environment the OIDC `sub` is the environment form, otherwise the branch form;
+  the role must trust the one the job actually produces;
+- the role also needs `codebuild:BatchGetBuilds` on the project for the job to wait for
+  the result;
+- an account has exactly one GitHub OIDC provider. `apps/dad-main`'s `pipeline-iam` stack
+  owns it, and `apps/atm` must not create another.
 
-End-to-end path:
+End-to-end path (v1):
 
 ```
-DAD-Main CI (push to dev / manual)
-  → assume OIDC role in sandbox|production
-  → aws codebuild start-build --project atm-runner-<env> --source-version <sha>
+EventBridge Scheduler (nightly) → codebuild:StartBuild atm-runner-<env>
 CodeBuild (privileged Docker)
-  → clone DAD-Main @ <sha>  (GitHub OIDC-scoped read)
+  → clone DAD-Main @ default-branch HEAD
   → npm run atm -- run --repo <checkout> --revision <sha>
   → capture ATM exit code
   → post-run sync: evidence → S3, findings → DynamoDB (conditional writes)
-  → exit with ATM's code  (CI gates on it)
-EventBridge Scheduler → same start-build for nightly/periodic runs (no commit)
+  → exit with ATM's code
 ```
-
-Tradeoff (accepted): this couples "start an ATM run" into DAD-Main's CI as a
-workflow step, rather than ATM being self-triggering from AWS. Given we want the
-validated revision and the trigger to be the same source of truth, that coupling
-is intentional.
 
 ### 6.3 Finding-ledger decision — DynamoDB
 
@@ -378,10 +372,9 @@ both.
 1. **Extraction timing — RESOLVED.** Scaffold shared packages now, stand up
    DAD-Quality first, then extract DAD-Main. Both are in scope for this effort
    (worked through together), DAD-Quality leading. (§9)
-2. **Commit trigger + source acquisition — RESOLVED.** DAD-Main CI dispatches the
-   run via GitHub OIDC `codebuild:StartBuild --source-version <sha>`; CodeBuild
-   clones DAD-Main at that SHA; EventBridge Scheduler covers scheduled/manual. No
-   AWS-side webhook. (§6.5)
+2. **Commit trigger + source acquisition — REVISED.** v1 is scheduled-only. The
+   CI-triggered `StartBuild` role was removed until it is decided how AWS runs relate to
+   DAD-Main's existing ATM gate and its ledger. No AWS-side webhook. (§6.5)
 3. **ATM concurrency — RESOLVED.** Allow concurrent runs; DynamoDB conditional
    writes make the ledger concurrency-safe. (§6.3)
 
@@ -392,9 +385,12 @@ both.
 5. **Evidence retention window.** How long to keep run evidence in S3 before
    lifecycle expiry? (ATM's local retention is manual; cloud should be explicit —
    propose a concrete default in the plan, e.g. 90 days staging / longer production.)
-6. **GitHub read for the CodeBuild clone.** CodeBuild native GitHub source vs. a
-   short-lived GitHub App token — pick during implementation based on how DAD-Main's
-   repo access is already brokered.
+6. **GitHub read for the CodeBuild clone.** Scheduled runs clone anonymously while
+   DAD-Main is public (§6.5). If it becomes private, decide between a stored read-only
+   credential and a minted short-lived App token.
 7. **Website as a future tenant.** Leave out entirely, or add a tracking stub for
    when its Lightsail/DNS resources become IaC-managed?
-```
+8. **How AWS runs relate to DAD-Main's ATM gate and ledger.** The gate (`atm.yml`) uses a
+   Cloudflare Worker ledger documented as authoritative; the AWS runner writes to
+   DynamoDB (§6.3). Decide whether the AWS runs complement the gate with a separate
+   ledger or integrate with the Worker ledger, before wiring CI to the runner (§6.5).
