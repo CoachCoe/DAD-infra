@@ -118,6 +118,19 @@ export class PipelineIamStack extends cdk.Stack {
         },
       }),
     );
+    // DAD-Main's deploy.yml resolves the cluster, compute subnets, and workers
+    // security group from the CloudFormation outputs these stacks publish
+    // (`aws cloudformation describe-stacks --stack-name dad-<name>-<env>`). Read-only,
+    // and limited to this environment's dad-* stacks.
+    this.appDeployRole.addToPolicy(
+      new iam.PolicyStatement({
+        sid: 'ReadStackOutputs',
+        actions: ['cloudformation:DescribeStacks'],
+        resources: [
+          `arn:aws:cloudformation:${config.region}:${config.account}:stack/dad-*-${config.env}/*`,
+        ],
+      }),
+    );
 
     new cdk.CfnOutput(this, 'OidcProviderArn', {
       value: this.provider.openIdConnectProviderArn,
