@@ -30,6 +30,21 @@ export const SERVICE_NAMES = [
 /** One of the nine long-running ECS service names. */
 export type ServiceName = (typeof SERVICE_NAMES)[number];
 
+/** The ECS cluster name for an environment. One definition, used wherever it is needed. */
+export function clusterNameFor(env: string): string {
+  return `dad-${env}`;
+}
+
+/**
+ * The worker services that send mail, and so read the SMTP relay credentials. The SMTP
+ * rotation restarts exactly these after a rotation.
+ */
+export const MAIL_WORKER_SERVICES = [
+  'login-email-worker',
+  'email-change-worker',
+  'message-worker',
+] as const satisfies readonly ServiceName[];
+
 /**
  * Map an env's logRetentionDays to the nearest supported CloudWatch
  * RetentionDays enum value. 30 → ONE_MONTH, 365 → ONE_YEAR.
@@ -86,7 +101,7 @@ export class EcsClusterStack extends cdk.Stack {
 
     this.cluster = new ecs.Cluster(this, 'Cluster', {
       vpc,
-      clusterName: `dad-${config.env}`,
+      clusterName: clusterNameFor(config.env),
       containerInsightsV2: ecs.ContainerInsights.ENABLED,
       defaultCloudMapNamespace: {
         name: this.namespaceName,

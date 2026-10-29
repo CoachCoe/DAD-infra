@@ -14,13 +14,6 @@ CloudFormation waits for a new service to stabilize, and with the circuit breake
 service that cannot start fails the stack. So the stacks are deployed in groups, with
 manual steps between them.
 
-## Open blockers (resolve before the first deploy)
-
-1. **SES SMTP password.** `dad/<env>/ses/smtp` stores the IAM user's secret access key as
-   `DONOR_SMTP_PASSWORD`. SES SMTP needs a password derived from that key (AWS documents
-   the algorithm), so mail fails authentication until an operator replaces it (step 5).
-   Consider generating it at deploy time instead.
-
 ## Steps
 
 ### 1. CDK bootstrap the account
@@ -103,8 +96,10 @@ aws secretsmanager put-secret-value --secret-id "dad/$ENV/app/stripe" \
 - **Encryption keys** are crown jewels. Generate them as DAD-Main `docs/operations.md`
   describes, back them up outside AWS before using them, and never rotate them
   automatically. Losing one makes the data it protects permanently unreadable.
-- **SMTP**: replace `DONOR_SMTP_PASSWORD` in `dad/$ENV/ses/smtp` with the SES SMTP password
-  derived from the stored secret access key (blocker 1).
+- **SMTP** needs nothing: `dad/$ENV/ses/smtp` is filled by its rotation function, which
+  runs when the SES stack is created and every 90 days after. If the first rotation failed
+  (its log group is `/dad/$ENV/smtp-rotation`), fix the cause and run
+  `aws secretsmanager rotate-secret --secret-id dad/$ENV/ses/smtp`.
 
 ### 6. Deploy the maintenance stack and prepare the database
 
