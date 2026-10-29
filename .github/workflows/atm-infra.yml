@@ -1,12 +1,12 @@
 name: ATM Infra (CDK)
 
 # Infrastructure pipeline for the apps/atm CDK app (CodeBuild runner, S3 evidence,
-# DynamoDB ledger, Secrets Manager, EventBridge/OIDC triggers). Path-filtered so a
-# change to this app or the shared packages synthesizes only this app, never the
-# other tenants in the monorepo.
+# DynamoDB ledger, Secrets Manager, EventBridge/OIDC triggers). Deploys are
+# path-filtered so a change to this app or the shared packages deploys only this
+# app, never the other tenants in the monorepo.
 #
 # Flow (models DAD-Main/infra/.github/workflows/infra.yml):
-#   - PR touching apps/atm/**, packages/**, or this file
+#   - every PR (unfiltered, so the required `synth` check always reports)
 #                              -> offline `cdk synth` of BOTH envs (no AWS creds).
 #                                 This is the real PR signal.
 #   - push to dev              -> `cdk deploy -c env=staging`  (sandbox 853377042897).
@@ -22,11 +22,10 @@ name: ATM Infra (CDK)
 # Region is us-east-2.
 
 on:
+  # No `paths:` filter on pull_request: the `synth` job is a required status check, and
+  # a required check that never runs (because a PR touched only docs, say) blocks the
+  # merge forever. Deploys below stay path-filtered.
   pull_request:
-    paths:
-      - "apps/atm/**"
-      - "packages/**"
-      - ".github/workflows/atm-infra.yml"
   push:
     branches: [dev, main]
     paths:

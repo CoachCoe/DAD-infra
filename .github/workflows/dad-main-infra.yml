@@ -5,12 +5,12 @@ name: DAD-Main Infra (CDK)
 # Extracted from DAD-Main/infra/.github/workflows/infra.yml: after the extraction
 # the CDK app lives here in the monorepo, so the infra pipeline runs from here.
 # The application rollout (ECR build/push + `aws ecs update-service`) stays
-# repo-local in DAD-Main's deploy.yml — it is not CDK. Path-filtered so a change
-# to this app or the shared packages synthesizes only this app, never the other
-# tenants in the monorepo.
+# repo-local in DAD-Main's deploy.yml — it is not CDK. Deploys are path-filtered so
+# a change to this app or the shared packages deploys only this app, never the
+# other tenants in the monorepo.
 #
 # Flow (models DAD-Main/infra/.github/workflows/infra.yml):
-#   - PR touching apps/dad-main/**, packages/**, or this file
+#   - every PR (unfiltered, so the required `synth` check always reports)
 #                              -> offline `cdk synth` of BOTH envs (no AWS creds).
 #                                 This is the real PR signal.
 #   - push to dev              -> `cdk deploy -c env=staging`  (sandbox 853377042897).
@@ -26,11 +26,10 @@ name: DAD-Main Infra (CDK)
 # Region is us-east-2.
 
 on:
+  # No `paths:` filter on pull_request: the `synth` job is a required status check, and
+  # a required check that never runs (because a PR touched only docs, say) blocks the
+  # merge forever. Deploys below stay path-filtered.
   pull_request:
-    paths:
-      - "apps/dad-main/**"
-      - "packages/**"
-      - ".github/workflows/dad-main-infra.yml"
   push:
     branches: [dev, main]
     paths:
