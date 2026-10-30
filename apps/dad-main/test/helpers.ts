@@ -95,6 +95,7 @@ export function buildGraph(name: EnvName = 'staging', overrides: Partial<EnvConf
       config,
       clusterName: ecsCluster.cluster.clusterName,
       services: services.services,
+      database: data.instance,
     },
   );
   const pipelineIam = new PipelineIamStack(app, `dad-pipeline-iam-${name}`, {

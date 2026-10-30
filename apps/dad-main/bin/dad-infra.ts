@@ -136,8 +136,8 @@ new ObservabilityStack(app, stackId('observability'), {
   config,
   clusterName: ecsCluster.cluster.clusterName,
   services: services.services,
+  database: data.instance,
 });
-
 
 // 9. Pipeline IAM — GitHub OIDC provider + deploy roles.
 new PipelineIamStack(app, stackId('pipeline-iam'), { env, config });
