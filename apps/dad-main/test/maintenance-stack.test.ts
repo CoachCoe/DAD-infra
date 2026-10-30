@@ -79,4 +79,14 @@ describe('MaintenanceStack', () => {
       AlarmActions: Match.anyValue(),
     });
   });
+
+  it('subscribes the alarm email to its own topic when one is configured', () => {
+    const t = Template.fromStack(
+      buildGraph('staging', {}, { alarmEmail: 'ops@example.org' }).maintenance,
+    );
+    t.hasResourceProperties('AWS::SNS::Subscription', {
+      Protocol: 'email',
+      Endpoint: 'ops@example.org',
+    });
+  });
 });

@@ -7,7 +7,7 @@ import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import * as path from 'path';
 import { EnvConfig } from './config';
-import { clusterNameFor, MAIL_WORKER_SERVICES } from './ecs-cluster-stack';
+import { clusterNameFor, MAIL_WORKER_SERVICES, toRetentionDays } from './ecs-cluster-stack';
 
 /** Props for {@link SesStack}. */
 export interface SesStackProps extends cdk.StackProps {
@@ -101,7 +101,7 @@ export class SesStack extends cdk.Stack {
       },
       logGroup: new logs.LogGroup(this, 'SmtpRotationLogs', {
         logGroupName: `/dad/${config.env}/smtp-rotation`,
-        retention: config.logRetentionDays as logs.RetentionDays,
+        retention: toRetentionDays(config.logRetentionDays),
       }),
     });
     this.rotationFunction.addToRolePolicy(

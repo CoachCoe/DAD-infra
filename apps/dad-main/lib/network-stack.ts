@@ -150,6 +150,13 @@ export class NetworkStack extends cdk.Stack {
       'nginx https from NLB',
     );
 
+    // The NLB health check probes the nginx health listener.
+    this.nginxSecurityGroup.addIngressRule(
+      this.nlbSecurityGroup,
+      ec2.Port.tcp(8081),
+      'nginx health check from NLB',
+    );
+
     // web accepts 3000 from nginx only.
     this.webSecurityGroup.addIngressRule(
       this.nginxSecurityGroup,

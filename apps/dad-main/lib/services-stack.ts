@@ -14,7 +14,6 @@ import { AppSecrets, secretFields, TaskFactory } from './task-factory';
 /** Props for {@link ServicesStack}. */
 export interface ServicesStackProps extends cdk.StackProps {
   readonly config: EnvConfig;
-  readonly vpc: ec2.IVpc;
   readonly computeSubnets: ec2.SubnetSelection;
   readonly cluster: ecs.ICluster;
   readonly namespaceName: string;
@@ -61,7 +60,6 @@ export class ServicesStack extends cdk.Stack {
 
     const {
       config,
-      vpc,
       computeSubnets,
       cluster,
       namespaceName,
@@ -335,8 +333,5 @@ export class ServicesStack extends cdk.Stack {
         },
       );
     }
-
-    // Keep the VPC reference meaningful for reviewers / future wiring.
-    void vpc;
   }
 }

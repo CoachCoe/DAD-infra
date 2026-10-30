@@ -77,7 +77,6 @@ const appSecrets = new AppSecretsStack(app, stackId('app-secrets'), { env, confi
 const services = new ServicesStack(app, stackId('services'), {
   env,
   config,
-  vpc: network.vpc,
   computeSubnets: network.computeSubnets,
   cluster: ecsCluster.cluster,
   namespaceName: ecsCluster.namespaceName,
@@ -136,8 +135,8 @@ new ObservabilityStack(app, stackId('observability'), {
   config,
   clusterName: ecsCluster.cluster.clusterName,
   services: services.services,
+  database: data.instance,
 });
-
 
 // 9. Pipeline IAM — GitHub OIDC provider + deploy roles.
 new PipelineIamStack(app, stackId('pipeline-iam'), { env, config });

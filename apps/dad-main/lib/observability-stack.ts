@@ -1,6 +1,7 @@
 import * as cdk from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 import * as ecs from 'aws-cdk-lib/aws-ecs';
+import * as rds from 'aws-cdk-lib/aws-rds';
 import * as sns from 'aws-cdk-lib/aws-sns';
 import * as snsSubs from 'aws-cdk-lib/aws-sns-subscriptions';
 import * as cloudwatch from 'aws-cdk-lib/aws-cloudwatch';
@@ -14,6 +15,8 @@ export interface ObservabilityStackProps extends cdk.StackProps {
   readonly clusterName: string;
   /** The nine long-running services keyed by service name. */
   readonly services: Record<ServiceName, ecs.FargateService>;
+  /** The database instance, alarmed on CPU and free storage. */
+  readonly database: rds.IDatabaseInstance;
   /**
    * Optional email address to subscribe to the SNS topic. Comes from CDK
    * context `alarmEmail` if not supplied; left unsubscribed when absent.
@@ -25,8 +28,8 @@ export interface ObservabilityStackProps extends cdk.StackProps {
  * ObservabilityStack.
  *
  * One SNS topic (optional email subscription), a per-service alarm for ECS
- * health (running task count below desired), and a monitor queue-age
- * placeholder alarm. All alarms notify the SNS topic.
+ * health (running task count below desired), database CPU and storage alarms, and a
+ * monitor queue-age placeholder alarm. All alarms notify the SNS topic.
  */
 export class ObservabilityStack extends cdk.Stack {
   public readonly topic: sns.Topic;
@@ -36,7 +39,7 @@ export class ObservabilityStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props: ObservabilityStackProps) {
     super(scope, id, props);
 
-    const { config, clusterName, services } = props;
+    const { config, clusterName, services, database } = props;
 
     this.topic = new sns.Topic(this, 'Alarms', {
       topicName: `dad-${config.env}-alarms`,
@@ -67,14 +70,12 @@ export class ObservabilityStack extends cdk.Stack {
         period: cdk.Duration.minutes(1),
       });
 
-      const desired =
-        name === 'api'
-          ? config.desiredCounts.api
-          : name === 'web'
-            ? config.desiredCounts.web
-            : name === 'nginx'
-              ? config.desiredCounts.nginx
-              : config.desiredCounts.workers;
+      const isWorker = name !== 'api' && name !== 'web' && name !== 'nginx';
+      // Workers are held at zero tasks while config.workersEnabled is off.
+      if (isWorker && !config.workersEnabled) {
+        continue;
+      }
+      const desired = isWorker ? config.desiredCounts.workers : config.desiredCounts[name];
 
       const alarm = new cloudwatch.Alarm(this, `Health-${name}`, {
         alarmName: `dad-${config.env}-${name}-unhealthy`,
@@ -88,6 +89,35 @@ export class ObservabilityStack extends cdk.Stack {
       });
       alarm.addAlarmAction(action);
       this.serviceHealthAlarms.push(alarm);
+    }
+
+    // --- database ---------------------------------------------------------
+    const dbAlarms: Array<[string, cloudwatch.Metric, number, cloudwatch.ComparisonOperator, string]> = [
+      [
+        'DatabaseCpu',
+        database.metricCPUUtilization({ period: cdk.Duration.minutes(5) }),
+        80,
+        cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
+        'Database CPU above 80% for 15 minutes.',
+      ],
+      [
+        'DatabaseFreeStorage',
+        database.metricFreeStorageSpace({ period: cdk.Duration.minutes(5) }),
+        5 * 1024 ** 3,
+        cloudwatch.ComparisonOperator.LESS_THAN_THRESHOLD,
+        'Database free storage below 5 GiB.',
+      ],
+    ];
+    for (const [id, metric, threshold, comparisonOperator, description] of dbAlarms) {
+      new cloudwatch.Alarm(this, id, {
+        alarmName: `dad-${config.env}-${id}`,
+        alarmDescription: description,
+        metric,
+        threshold,
+        evaluationPeriods: 3,
+        comparisonOperator,
+        treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+      }).addAlarmAction(action);
     }
 
     // --- monitor queue-age placeholder ----------------------------------
