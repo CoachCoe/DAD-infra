@@ -7,3 +7,5 @@ cdk.out/
 cdk.context.json
 .agents/
 .DS_Store
+__pycache__/
+*.pyc
