@@ -9,7 +9,7 @@ export interface SecretsStackProps extends cdk.StackProps {
 }
 
 /**
- * SecretsStack (PLAN item 1.4).
+ * SecretsStack.
  *
  * The provider API-key secrets for AI exploration: `atm/<env>/openai` and
  * `atm/<env>/tinker`. Created as empty placeholders (values filled out of

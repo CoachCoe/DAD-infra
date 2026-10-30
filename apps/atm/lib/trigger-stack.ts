@@ -15,7 +15,7 @@ export interface TriggerStackProps extends cdk.StackProps {
 }
 
 /**
- * TriggerStack (PLAN item 1.6).
+ * TriggerStack.
  *
  * Runs are started by EventBridge Scheduler (nightly/periodic). The scheduler's role
  * is scoped to `codebuild:StartBuild` on exactly this project. No AWS-side webhook or

@@ -9,7 +9,7 @@ export interface EvidenceStackProps extends cdk.StackProps {
 }
 
 /**
- * EvidenceStack (PLAN item 1.2).
+ * EvidenceStack.
  *
  * The private S3 bucket that holds each run's bulky, immutable artifacts
  * (`run.json`, `report.html`, traces, screenshots), keyed by

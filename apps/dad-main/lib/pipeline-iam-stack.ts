@@ -28,7 +28,7 @@ export interface PipelineIamStackProps extends cdk.StackProps {
 }
 
 /**
- * PipelineIamStack (PLAN item 11).
+ * PipelineIamStack.
  *
  * The GitHub Actions OIDC provider (token.actions.githubusercontent.com) and
  * two env-scoped deploy roles:

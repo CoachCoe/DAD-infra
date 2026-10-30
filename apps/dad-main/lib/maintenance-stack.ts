@@ -42,15 +42,16 @@ export interface MaintenanceStackProps extends cdk.StackProps {
 }
 
 /**
- * MaintenanceStack (PLAN item 8).
+ * MaintenanceStack.
  *
- * run-task task definitions for migrate, provision-roles, staff, rekey, monitor
- * (five one-off maintenance tasks), plus a reconcile task definition driven by
+ * run-task task definitions for migrate, provision-roles, staff, rekey, monitor and
+ * bootstrap-owner (six one-off tasks), plus a reconcile task definition driven by
  * an EventBridge Scheduler cron (~00:30 America/New_York) as a Fargate
  * run-task, with a CloudWatch alarm on a non-zero reconcile exit wired to SNS.
  *
  * These are task definitions only — CDK never runs them. The operator invokes
- * them via infra/scripts/run-task.sh (migrate → provision-roles order).
+ * them with DAD-Main's scripts/run-task.sh (bootstrap-owner once, then migrate →
+ * provision-roles; see docs/bootstrap.md).
  */
 export class MaintenanceStack extends cdk.Stack {
   public readonly taskDefinitions: Record<string, ecs.FargateTaskDefinition>;

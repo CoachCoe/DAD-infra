@@ -7,7 +7,7 @@
  * (hostnames, sizing, feature toggles, db name) on top, so it stays the single
  * module every stack, bin, and test imports from `./config`.
  *
- * Confirmed facts (from docs/aws-deployment.md and PLAN.md):
+ * Confirmed facts (from DAD-Main docs/aws-deployment.md):
  *   - region is always us-east-2 (Ohio)
  *   - staging account 853377042897, production account 216833405626
  *   - hosts live under dynamicaid.org; sending subdomain is a dedicated mail.* host

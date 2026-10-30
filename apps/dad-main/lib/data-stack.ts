@@ -19,7 +19,7 @@ export interface DataStackProps extends cdk.StackProps {
 }
 
 /**
- * DataStack (PLAN item 5).
+ * DataStack.
  *
  * RDS PostgreSQL 16 in the isolated subnets (encrypted storage, automated
  * backups, multiAz + deletionProtection driven by config), fronted by an RDS

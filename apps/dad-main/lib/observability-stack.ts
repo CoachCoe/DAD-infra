@@ -22,7 +22,7 @@ export interface ObservabilityStackProps extends cdk.StackProps {
 }
 
 /**
- * ObservabilityStack (PLAN item 10a).
+ * ObservabilityStack.
  *
  * One SNS topic (optional email subscription), a per-service alarm for ECS
  * health (running task count below desired), and a monitor queue-age

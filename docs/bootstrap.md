@@ -1,8 +1,9 @@
 # First deploy of an environment (bootstrap runbook)
 
 How to bring up `staging` or `production` for the first time. Later releases need none
-of this: DAD-Main's `deploy.yml` deploys the application, and `dad-main-infra.yml` /
-`atm-infra.yml` deploy infrastructure changes.
+of this: DAD-Main's `deploy.yml` deploys the application, and `dad-main-infra.yml`
+deploys infrastructure changes. (`atm-infra.yml` only runs checks: the DAD-Quality runner
+is not deployed.)
 
 Everything here runs once per environment, by an operator with administrator access to
 that account, in `us-east-2`. Commands assume `ENV=staging` (or `production`) and a shell
