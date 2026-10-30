@@ -77,7 +77,6 @@ const appSecrets = new AppSecretsStack(app, stackId('app-secrets'), { env, confi
 const services = new ServicesStack(app, stackId('services'), {
   env,
   config,
-  vpc: network.vpc,
   computeSubnets: network.computeSubnets,
   cluster: ecsCluster.cluster,
   namespaceName: ecsCluster.namespaceName,

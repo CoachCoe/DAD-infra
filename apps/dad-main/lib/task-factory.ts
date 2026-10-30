@@ -1,4 +1,3 @@
-import * as cdk from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 import * as ecs from 'aws-cdk-lib/aws-ecs';
 import * as ecr from 'aws-cdk-lib/aws-ecr';
@@ -124,17 +123,4 @@ export class TaskFactory {
 
     return { taskDefinition, container };
   }
-}
-
-/**
- * Convert a Secrets Manager secret holding a JSON blob with a `password` field
- * into an ECS task secret. Shared helper for DB password injection, though DB
- * URLs themselves are injected as plain env (the URL embeds the password, built
- * from the resolved secret value via CfnDynamicReference where needed).
- */
-export function jsonFieldSecret(
-  secret: { secretValueFromJson: (key: string) => cdk.SecretValue },
-  field: string,
-): cdk.SecretValue {
-  return secret.secretValueFromJson(field);
 }

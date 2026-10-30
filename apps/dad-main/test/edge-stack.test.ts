@@ -72,7 +72,6 @@ describe('EdgeStack', () => {
     const services = new ServicesStack(app, 's', {
       env,
       config,
-      vpc: network.vpc,
       computeSubnets: network.computeSubnets,
       cluster: cluster.cluster,
       namespaceName: cluster.namespaceName,

@@ -39,7 +39,6 @@ export function buildGraph(name: EnvName = 'staging', overrides: Partial<EnvConf
   const services = new ServicesStack(app, `dad-services-${name}`, {
     env: ENV,
     config,
-    vpc: network.vpc,
     computeSubnets: network.computeSubnets,
     cluster: ecsCluster.cluster,
     namespaceName: ecsCluster.namespaceName,
