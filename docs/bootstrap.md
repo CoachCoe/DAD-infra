@@ -140,6 +140,14 @@ npx cdk deploy -c env=$ENV \
   dad-services-$ENV dad-edge-$ENV dad-observability-$ENV
 ```
 
+The NLB admits only Cloudflare's published ranges on 80 and 443. The list is built in
+(`apps/dad-main/lib/edge-stack.ts`); check it against
+[ips-v4](https://www.cloudflare.com/ips-v4) and [ips-v6](https://www.cloudflare.com/ips-v6)
+before a deploy, and override it with `-c cloudflareRanges="<cidr> <cidr> ..."` if it has
+changed. Set `alarmEmail` to subscribe an address to the alarm topics (confirm the
+subscription email AWS sends). CI deploys pass no `-c` flags beyond `env`, so put either
+value under `context` in `apps/dad-main/cdk.json` to keep it across deploys.
+
 Point the public and staff hostnames in Cloudflare (proxied) at the NLB DNS name from the
 `dad-edge-$ENV` outputs.
 
