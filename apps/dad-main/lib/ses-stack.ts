@@ -15,7 +15,7 @@ export interface SesStackProps extends cdk.StackProps {
 }
 
 /**
- * SesStack (PLAN item 10b).
+ * SesStack.
  *
  * An SES domain identity for config.sendingSubdomain with Easy DKIM enabled, an
  * IAM user whose only permission is `ses:SendRawEmail` (SMTP sending), and a

@@ -19,16 +19,17 @@ DAD-infra uses repository **rulesets** (not classic branch protection) and prote
 | Required status check | `synth`, branch up to date | No red merges. |
 | Block force-pushes | on | Protects history. |
 | Block deletion | on | The branches cannot be deleted. |
-| Bypass | repository **admin**, `pull_request` mode | The owner can still merge a PR if a check cannot report. Does not allow direct pushes. |
+| Bypass | repository **admin**, `pull_request` mode | The owner can still merge a PR if a check cannot report. Use it only when a check cannot run, never to merge past one that failed or is still running (DAD-Docs ADR 0005). Does not allow direct pushes. |
 
 ### Why `synth` must always run
 
 A required check that never runs blocks the merge forever. Both infra workflows
 (`atm-infra.yml`, `dad-main-infra.yml`) therefore have **no `paths:` filter on
-`pull_request`**; each runs an offline `cdk synth` of both environments on every PR. Both
-define a job named `synth`, and the ruleset requires that name. Deploy triggers (`push`,
-`release`) stay path-filtered. If you rename the `synth` job, update the ruleset in the
-same change.
+`pull_request`**; on every PR each runs the unit tests (`npx jest`) and an offline
+`cdk synth` of both environments. Both define a job named `synth`, and the ruleset
+requires that name. `dad-main-infra.yml`'s deploy triggers (`push` to `dev` and `main`)
+stay path-filtered; `atm-infra.yml` has none. If you rename the `synth` job, update the
+ruleset in the same change.
 
 ## Apply (one-time per branch)
 

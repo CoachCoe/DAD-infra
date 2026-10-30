@@ -75,7 +75,7 @@ export function toRetentionDays(days: number): logs.RetentionDays {
 }
 
 /**
- * EcsClusterStack (PLAN item 6).
+ * EcsClusterStack.
  *
  * The Fargate cluster per environment with a Cloud Map / Service Connect
  * namespace, the three ECR repositories (dad/api, dad/web, dad/nginx) with

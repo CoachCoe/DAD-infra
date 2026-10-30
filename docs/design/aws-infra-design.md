@@ -1,6 +1,6 @@
 # DAD-infra — AWS infrastructure design
 
-Status: **draft for review** · Owner: Shawn · Last updated: 2026-10-29
+Status: **accepted; built, not yet deployed** · Owner: Shawn · Last updated: 2026-10-29
 
 A single home for the DAD AWS CDK estate. This document decides the repository's
 scope, the account/region model, and the architecture for the two initial
@@ -338,8 +338,7 @@ repo:
 - Re-run DAD-Main's offline verification gate from the new location to prove
   byte-for-byte-equivalent synth output.
 
-This extraction is tracked separately from standing up ATM so the two can be
-sequenced independently (see §9).
+The extraction is complete: DAD-Main's CDK app is `apps/dad-main`.
 
 ---
 
@@ -360,23 +359,22 @@ sequenced independently (see §9).
 
 ---
 
-## 9. Proposed sequencing
+## 9. What is built
 
-1. **Scaffold DAD-infra** — repo skeleton, `packages/config` (ported from
-   DAD-Main, single-sourced account map), `packages/pipeline-iam` (shared OIDC
-   provider), toolchain + offline verification wired. (DAD-infra repo)
-2. **ATM stack (A + C)** — `apps/atm`: CodeBuild runner, S3 evidence bucket,
-   DynamoDB ledger, EventBridge trigger, Secrets Manager, scoped IAM role.
-   Offline-synth + assertions tests. (DAD-infra repo)
-3. **ATM post-run sync wrapper** — the buildspec + post-run script that uploads
-   evidence to S3 and reconciles findings into DynamoDB. (atm repo)
-4. **DAD-Main extraction** — move `infra/` into `apps/dad-main`, de-dupe config +
-   OIDC, repoint pipelines, re-verify. (DAD-infra + DAD-Main repos)
-5. **Later: Path B** — authenticated hosted dashboard reading S3 + DynamoDB.
+- **Shared packages:** `packages/config` (account map, region, `-c env`) and
+  `packages/pipeline-iam` (the one GitHub OIDC provider per account; deploy roles can
+  only trust a GitHub Environment).
+- **`apps/dad-main`:** the DAD-Main estate, extracted from DAD-Main. Application secrets
+  start empty, SMTP credentials rotate automatically, a one-off task creates the database
+  owner role, services have health checks and roll back, images are tagged from the
+  last deployed release, and workers have one switch (off by default). First deploy:
+  [`docs/bootstrap.md`](../bootstrap.md).
+- **`apps/atm`:** the DAD-Quality runner on AWS, built and tested, held and not deployed
+  (§6.5).
+- **Out of scope:** the hosted multi-user dashboard ("Path B").
 
-Items 1–3 deliver the primary goal (ATM on AWS with durable evidence). Item 4 can
-happen before or after 2–3; doing 1 first makes the shared packages available to
-both.
+Operating rules that came out of building it are recorded in DAD-Docs ADR 0005; the
+ledger decision in ADR 0006.
 
 ---
 

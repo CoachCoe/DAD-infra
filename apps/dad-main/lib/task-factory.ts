@@ -65,7 +65,7 @@ export interface TaskDefinitionSpec {
 }
 
 /**
- * A reusable Fargate task-definition factory (PLAN item 7).
+ * A reusable Fargate task-definition factory.
  *
  * Centralizes the repeated wiring every DAD task needs: Fargate CPU/memory,
  * a single container from one of the three ECR repos running as the Dockerfile

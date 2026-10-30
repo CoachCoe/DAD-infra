@@ -30,7 +30,7 @@ export interface RunnerStackProps extends cdk.StackProps {
 }
 
 /**
- * RunnerStack (PLAN item 1.5).
+ * RunnerStack.
  *
  * The CodeBuild project `atm-runner-<env>` that runs an ATM acceptance pass.
  * Privileged (Docker-in-Docker) so ATM can build DAD-Main images and drive a

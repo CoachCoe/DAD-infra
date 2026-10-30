@@ -18,7 +18,7 @@ export const LEDGER_STATUS_ATTR = 'status';
 export const BY_STATUS_INDEX = 'by-status';
 
 /**
- * LedgerStack (PLAN item 1.3).
+ * LedgerStack.
  *
  * The DynamoDB finding ledger — the small, keyed, mutable, concurrency-safe
  * finding store. Findings are grouped by `(source repo, normalized signature)`

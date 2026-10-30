@@ -19,7 +19,7 @@ export interface EdgeStackProps extends cdk.StackProps {
 }
 
 /**
- * EdgeStack (PLAN item 9).
+ * EdgeStack.
  *
  * Internet-facing Network Load Balancer with TCP listeners 443→nginx:8443 and
  * 80→nginx:8080, targeting the nginx service. When

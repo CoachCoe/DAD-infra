@@ -10,7 +10,7 @@ export interface NetworkStackProps extends cdk.StackProps {
 }
 
 /**
- * NetworkStack (PLAN item 4).
+ * NetworkStack.
  *
  * A dedicated VPC per environment across 2+ AZs with three subnet tiers:
  *   - public               → NLB

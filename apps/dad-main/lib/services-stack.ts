@@ -45,7 +45,7 @@ interface WorkerSpec {
 }
 
 /**
- * ServicesStack (PLAN item 7).
+ * ServicesStack.
  *
  * Exactly nine long-running Fargate services matching docker-compose.prod.yml:
  * api, web, nginx, and the six workers. Each is built through the shared

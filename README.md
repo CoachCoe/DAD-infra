@@ -10,9 +10,12 @@ DAD-infra/
     pipeline-iam/    # shared GitHub OIDC provider + scoped deploy-role helper
   apps/
     dad-main/        # DAD-Main estate: VPC, RDS + Proxy, ECS Fargate, SES, NLB, pipeline IAM
+      lambda/        #   SES SMTP credential rotation function (Python)
     atm/             # DAD-Quality runner on AWS: built and tested, NOT deployed (see design §6.5)
   docs/
     design/          # architecture and decisions
+    bootstrap.md     # first deploy of an environment
+    branch-protection.md
 ```
 
 ## Design
@@ -37,12 +40,13 @@ exactly one repo:
 
 | Repo | Workflow | Role (created by `apps/dad-main` pipeline-iam) | Environment variable |
 |---|---|---|---|
-| `CoachCoe/DAD-infra` | `dad-main-infra.yml` (`atm-infra.yml` reads the same variable) | `dad-<env>-infra-deploy` | `INFRA_DEPLOY_ROLE_ARN` |
+| `CoachCoe/DAD-infra` | `dad-main-infra.yml` | `dad-<env>-infra-deploy` | `INFRA_DEPLOY_ROLE_ARN` |
 | `CoachCoe/DAD-Main` | `deploy.yml` | `dad-<env>-app-deploy` | `APP_DEPLOY_ROLE_ARN` |
 
 Create the `staging` and `production` environments in **both** repos and set the
 variable on each (the role ARN is a stack output of the account's `pipeline-iam`
-stack). The credentialed jobs stay skipped until the variable is set.
+stack). The credentialed jobs stay skipped until the variable is set. `atm-infra.yml`
+has no deploy jobs (the runner is held).
 
 **The environment is the access control.** Any job in the trusted repo that runs under
 the environment can assume the role, so restrict deployments in each environment's
@@ -53,17 +57,18 @@ select the environment.
 
 ## Offline verification (no deploys)
 
-The estate is parked until the team is ready to incur AWS cost. All verification
-is offline — never run `cdk deploy`, `aws`, or any live AWS command.
+Nothing is deployed yet; the first deploy follows [docs/bootstrap.md](docs/bootstrap.md).
+The checks below are offline and need no AWS credentials. CI's required `synth` check
+runs the same tests and synth on every PR.
 
 ```sh
 # from the repo root
 npm install
 npm run build
-npx jest
+npx jest   # all workspaces; also runs the rotation function's Python tests (needs python3)
 
-# per-app offline synth (dummy account/region)
-cd apps/atm
+# per-app offline synth (dummy account/region), for apps/dad-main and apps/atm
+cd apps/dad-main
 CDK_DEFAULT_ACCOUNT=111111111111 CDK_DEFAULT_REGION=us-east-2 npx cdk synth -c env=staging
 CDK_DEFAULT_ACCOUNT=111111111111 CDK_DEFAULT_REGION=us-east-2 npx cdk synth -c env=production
 ```
