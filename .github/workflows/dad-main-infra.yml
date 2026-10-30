@@ -44,10 +44,8 @@ on:
         options: [staging, production]
         default: staging
 
-# OIDC needs id-token: write; the rest is read-only.
 permissions:
   contents: read
-  id-token: write
 
 concurrency:
   group: dad-main-infra-${{ github.ref }}
@@ -96,6 +94,9 @@ jobs:
   # bootstrapped and INFRA_DEPLOY_ROLE_ARN is set (matches DAD-Main's pattern).
   deploy-staging:
     if: github.event_name == 'push' && github.ref == 'refs/heads/dev' && vars.INFRA_DEPLOY_ROLE_ARN != ''
+    permissions:
+      contents: read
+      id-token: write
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     environment: staging
@@ -118,13 +119,16 @@ jobs:
         working-directory: apps/dad-main
         run: npx cdk deploy -c env=staging --all --require-approval never
 
-  # Release tag or merge to main -> production deploy, gated by the `production`
-  # GitHub Environment (manual-approval protection rule is configured on that
-  # environment in repo settings, not in YAML) and the deploy-role var.
+  # Merge to main -> production deploy, gated by the `production` GitHub Environment
+  # (required reviewers are configured on that environment in repo settings, not in
+  # YAML) and the deploy-role var.
   deploy-production:
     if: >-
       vars.INFRA_DEPLOY_ROLE_ARN != '' &&
       github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      id-token: write
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     environment: production
@@ -150,6 +154,9 @@ jobs:
   # On-demand deploy to a chosen environment, gated on the deploy-role var.
   deploy-dispatch:
     if: github.event_name == 'workflow_dispatch' && vars.INFRA_DEPLOY_ROLE_ARN != ''
+    permissions:
+      contents: read
+      id-token: write
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     environment: ${{ inputs.env }}

@@ -31,6 +31,53 @@ The authoritative architecture, account/region model, and decisions live in
 
 Environment is selected with `-c env=staging|production` (default `staging`).
 
+## Sizing and scaling
+
+Values live in `apps/dad-main/lib/config.ts`. No load test has been run against these
+sizes, so the limits below are the configured ceilings and the levers, not measured
+capacity.
+
+| | staging | production |
+|---|---|---|
+| Availability zones | 2 subnets per tier, 1 NAT gateway | 2 subnets per tier, 2 NAT gateways |
+| Database | RDS PostgreSQL 16, `db.t3.medium`, single-AZ, 7-day backups | `db.t3.large`, Multi-AZ, 14-day backups |
+| Storage | 50 GiB gp3, autoscaling to 200 GiB | same |
+| api / web task | 0.5 vCPU, 1 GiB | 1 vCPU, 2 GiB |
+| nginx / worker task | 0.25 vCPU, 0.5 GiB | 0.5 vCPU, 1 GiB |
+| api, web, nginx tasks | 1 each, scaling to 3 / 3 / 2 | 2 each, scaling to 12 / 12 / 6 |
+| Workers | 6 services, 1 task each, off until `workersEnabled` | same |
+| Interface VPC endpoints | off (traffic uses the NAT) | on |
+
+The api, web and nginx services scale on average CPU (60%) and, for api and web, memory
+(75%). The floor is the configured desired count and the ceiling is `autoscaling.<service>.maxCount`.
+Traffic enters through a Network Load Balancer, which has no per-target request metric,
+so there is no request-count policy. Workers do not autoscale. The S3 gateway endpoint is
+always created; the ECR api/dkr, Secrets Manager and CloudWatch Logs interface endpoints
+(`interfaceEndpointsEnabled`) keep image pulls, secret resolution and log delivery off the
+NAT. VPC flow logs (all traffic) go to `/dad/<env>/vpc-flow-logs` with
+`flowLogRetentionDays`.
+
+Staging is single-AZ for the database and has one NAT gateway, so an AZ outage takes it
+down; production is Multi-AZ for the database and has a NAT per AZ.
+
+### Scaling path
+
+The first constraint is the database, not the web tier: every api task and worker shares
+one `db.t3` instance behind RDS Proxy, which pools connections but does not add CPU.
+
+- **About 50,000 users.** Raise the task ceilings and desired counts in `config.ts`
+  (the autoscaling floor is `desiredCounts`, so raise it when sustained load sits above
+  it). Move the production database off burstable `t3` to a fixed-performance class
+  (`m6g`/`r6g`), watching the `DatabaseCpu` alarm and Performance Insights. Turn the
+  workers on and size `taskSizes.worker` to the mail and Stripe volume.
+- **About 1,000,000 users.** Add an RDS read replica and route read-only queries to it
+  (an application change in DAD-Main), raise `maxAllocatedStorage`, and move to a larger
+  database class or Aurora PostgreSQL. Split the worker tiers into separate services with
+  their own counts, and replace the fixed NLB-to-nginx fan-out limits (task ceilings,
+  NAT throughput) with measured values from a load test run against staging first.
+
+Neither step is applied: instance classes are unchanged until a load test justifies them.
+
 ## GitHub Environments and deploy roles
 
 Deploys authenticate with GitHub OIDC (no static keys). Every deploy job runs under a

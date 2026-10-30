@@ -77,7 +77,6 @@ const appSecrets = new AppSecretsStack(app, stackId('app-secrets'), { env, confi
 const services = new ServicesStack(app, stackId('services'), {
   env,
   config,
-  vpc: network.vpc,
   computeSubnets: network.computeSubnets,
   cluster: ecsCluster.cluster,
   namespaceName: ecsCluster.namespaceName,
@@ -130,14 +129,14 @@ new EdgeStack(app, stackId('edge'), {
   nlbSecurityGroup: network.nlbSecurityGroup,
 });
 
-// 7. Observability — SNS topic + ECS health + monitor queue-age alarms.
+// 7. Observability — SNS topic + ECS health + database alarms.
 new ObservabilityStack(app, stackId('observability'), {
   env,
   config,
   clusterName: ecsCluster.cluster.clusterName,
   services: services.services,
+  database: data.instance,
 });
-
 
 // 9. Pipeline IAM — GitHub OIDC provider + deploy roles.
 new PipelineIamStack(app, stackId('pipeline-iam'), { env, config });

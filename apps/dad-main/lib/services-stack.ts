@@ -6,15 +6,15 @@ import * as ecr from 'aws-cdk-lib/aws-ecr';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import { EnvConfig } from './config';
-import { buildDatabaseUrl, PROCESS_LOGINS, ProcessLogin } from './db-url';
+import { PROCESS_LOGINS } from './db-url';
 import { ServiceName } from './ecs-cluster-stack';
 import { imageTagFor } from './image-tag';
-import { AppSecrets, secretFields, TaskFactory } from './task-factory';
+import { AppSecrets, databaseConnection, secretFields, TaskFactory } from './task-factory';
+import { ServiceScaling } from './config';
 
 /** Props for {@link ServicesStack}. */
 export interface ServicesStackProps extends cdk.StackProps {
   readonly config: EnvConfig;
-  readonly vpc: ec2.IVpc;
   readonly computeSubnets: ec2.SubnetSelection;
   readonly cluster: ecs.ICluster;
   readonly namespaceName: string;
@@ -56,12 +56,53 @@ interface WorkerSpec {
 export class ServicesStack extends cdk.Stack {
   public readonly services: Record<ServiceName, ecs.FargateService>;
 
+  private config!: ServicesStackProps['config'];
+
+  /**
+   * The desired count to put in the template. Omitted for an autoscaled service: with
+   * a count in the template every `cdk deploy` would reset a scaled-out service back
+   * to it. The scaling floor (the configured count) is then the effective minimum.
+   */
+  private initialCount(name: 'api' | 'web' | 'nginx'): number | undefined {
+    return this.config.autoscaling.enabled ? undefined : this.config.desiredCounts[name];
+  }
+
+  /** Target-tracking scaling on CPU, and memory when the service configures it. */
+  private autoscale(
+    name: 'api' | 'web' | 'nginx',
+    service: ecs.FargateService,
+    scaling: ServiceScaling,
+  ): void {
+    const min = this.config.desiredCounts[name];
+    if (scaling.maxCount < min) {
+      throw new Error(
+        `autoscaling.${name}.maxCount (${scaling.maxCount}) is below the desired count (${min})`,
+      );
+    }
+    const target = service.autoScaleTaskCount({
+      minCapacity: min,
+      maxCapacity: scaling.maxCount,
+    });
+    target.scaleOnCpuUtilization(`${name}-Cpu`, {
+      targetUtilizationPercent: scaling.cpuTargetPercent,
+      scaleOutCooldown: cdk.Duration.minutes(1),
+      scaleInCooldown: cdk.Duration.minutes(5),
+    });
+    if (scaling.memoryTargetPercent !== undefined) {
+      target.scaleOnMemoryUtilization(`${name}-Memory`, {
+        targetUtilizationPercent: scaling.memoryTargetPercent,
+        scaleOutCooldown: cdk.Duration.minutes(1),
+        scaleInCooldown: cdk.Duration.minutes(5),
+      });
+    }
+  }
+
   constructor(scope: Construct, id: string, props: ServicesStackProps) {
     super(scope, id, props);
+    this.config = props.config;
 
     const {
       config,
-      vpc,
       computeSubnets,
       cluster,
       namespaceName,
@@ -101,24 +142,17 @@ export class ServicesStack extends cdk.Stack {
     // COMPLETED, which is its deploy gate (no shell into running tasks needed).
     const rollout = { circuitBreaker: { rollback: true } };
 
-    // Build a per-process DB URL from the login secret's password field.
-    // The URL is a plain env var (as in Compose); the password resolves at
-    // deploy time via a {{resolve:secretsmanager:...}} dynamic reference.
-    const dbUrl = (processId: string): string => {
-      const login: ProcessLogin = PROCESS_LOGINS[processId];
-      const secret = loginSecrets[login.login];
-      const password = secret.secretValueFromJson('password').unsafeUnwrap();
-      return buildDatabaseUrl({
-        login: login.login,
-        password,
-        proxyEndpoint,
-        db: config.dbName,
-      });
+    // Each process gets a password-less URL in its environment and the login secret's
+    // password as an ECS secret (<PREFIX>_PASSWORD), which DAD-Main combines at start.
+    const db = (processId: string) => {
+      const login = PROCESS_LOGINS[processId];
+      return databaseConnection(login, loginSecrets[login.login], proxyEndpoint, config.dbName);
     };
 
     const trustedProxyCidrs = computeSubnetCidrs.join(',');
 
     // --- api ------------------------------------------------------------
+    const apiDb = db('api');
     const api = factory.build({
       id: 'api',
       image: 'api',
@@ -129,9 +163,10 @@ export class ServicesStack extends cdk.Stack {
         DONOR_PUBLIC_ORIGIN: config.publicOrigin,
         DONOR_STAFF_ORIGIN: config.staffOrigin,
         DONOR_TRUSTED_PROXY_CIDRS: trustedProxyCidrs,
-        DONOR_API_DATABASE_URL: dbUrl('api'),
+        ...apiDb.environment,
       },
       secrets: {
+        ...apiDb.secrets,
         ...secretFields(appSecrets.stripe, ['STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET']),
         ...secretFields(appSecrets.encryption, [
           'DONOR_EMAIL_ENCRYPTION_KEY',
@@ -158,7 +193,7 @@ export class ServicesStack extends cdk.Stack {
       cluster,
       serviceName: 'api',
       taskDefinition: api.taskDefinition,
-      desiredCount: config.desiredCounts.api,
+      desiredCount: this.initialCount('api'),
       vpcSubnets: computeSubnets,
       securityGroups: [apiSecurityGroup],
       // Register `api` in Service Connect so web resolves http://api:8002.
@@ -205,7 +240,7 @@ export class ServicesStack extends cdk.Stack {
       cluster,
       serviceName: 'web',
       taskDefinition: web.taskDefinition,
-      desiredCount: config.desiredCounts.web,
+      desiredCount: this.initialCount('web'),
       vpcSubnets: computeSubnets,
       securityGroups: [webSecurityGroup],
       // web is a Service Connect client (resolves api) but publishes nothing.
@@ -247,10 +282,16 @@ export class ServicesStack extends cdk.Stack {
       cluster,
       serviceName: 'nginx',
       taskDefinition: nginx.taskDefinition,
-      desiredCount: config.desiredCounts.nginx,
+      desiredCount: this.initialCount('nginx'),
       vpcSubnets: computeSubnets,
       securityGroups: [nginxSecurityGroup],
     });
+
+    if (config.autoscaling.enabled) {
+      this.autoscale('api', this.services.api, config.autoscaling.api);
+      this.autoscale('web', this.services.web, config.autoscaling.web);
+      this.autoscale('nginx', this.services.nginx, config.autoscaling.nginx);
+    }
 
     // --- the six workers ------------------------------------------------
     const workers: WorkerSpec[] = [
@@ -293,12 +334,12 @@ export class ServicesStack extends cdk.Stack {
     ];
 
     for (const w of workers) {
-      const login = PROCESS_LOGINS[w.processId];
+      const workerDb = db(w.processId);
       const environment: Record<string, string> = {
         // The worker binary refuses to start without this; whether workers run at all
         // is config.workersEnabled (their desired count).
         DONOR_GO_WORKERS_ENABLED: 'true',
-        [login.envVar]: dbUrl(w.processId),
+        ...workerDb.environment,
       };
       if (w.service === 'stripe-worker') {
         environment.DONOR_STRIPE_REQUESTS_PER_SECOND = '25';
@@ -314,6 +355,7 @@ export class ServicesStack extends cdk.Stack {
         command: ['worker', '--kind', w.kind],
         environment,
         secrets: {
+          ...workerDb.secrets,
           ...(w.service === 'stripe-worker' ? stripeKey : {}),
           ...(w.mail ? { ...emailKey, ...mailTransport } : {}),
         },
@@ -335,8 +377,5 @@ export class ServicesStack extends cdk.Stack {
         },
       );
     }
-
-    // Keep the VPC reference meaningful for reviewers / future wiring.
-    void vpc;
   }
 }

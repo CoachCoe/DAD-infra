@@ -140,6 +140,14 @@ npx cdk deploy -c env=$ENV \
   dad-services-$ENV dad-edge-$ENV dad-observability-$ENV
 ```
 
+The NLB admits only Cloudflare's published ranges on 80 and 443. The list is built in
+(`apps/dad-main/lib/edge-stack.ts`); check it against
+[ips-v4](https://www.cloudflare.com/ips-v4) and [ips-v6](https://www.cloudflare.com/ips-v6)
+before a deploy, and override it with `-c cloudflareRanges="<cidr> <cidr> ..."` if it has
+changed. Set `alarmEmail` to subscribe an address to the alarm topics (confirm the
+subscription email AWS sends). CI deploys pass no `-c` flags beyond `env`, so put either
+value under `context` in `apps/dad-main/cdk.json` to keep it across deploys.
+
 Point the public and staff hostnames in Cloudflare (proxied) at the NLB DNS name from the
 `dad-edge-$ENV` outputs.
 
@@ -162,6 +170,36 @@ Workers are off in every environment until `workersEnabled` is set to `true` in
 switch: it sets their desired count, and DAD-Main's `deploy.yml` rolls only services ECS
 reports as running. Turn them on once mail (SES out of sandbox, a working SMTP password)
 and, if used, Stripe are configured.
+
+### Autoscaled services and the app-deploy role
+
+api, web and nginx scale between their `desiredCounts` and `autoscaling.<service>.maxCount`.
+Their desired count is not in the template, so a later `cdk deploy` leaves a scaled-out
+service where it is. To resize permanently, change `desiredCounts` (the floor) or
+`maxCount` and deploy.
+
+The `app-deploy` role may pass only roles named `dad-services-$ENV-*` and
+`dad-maintenance-$ENV-*` to ECS tasks, and may run only the `dad-maint-*` task
+definitions in the `dad-$ENV` cluster. These names are the generated names of the task and
+execution roles in those two stacks; do not give those roles explicit names unless the
+`PassTaskRoles` statement in `apps/dad-main/lib/pipeline-iam-stack.ts` is updated too.
+
+### Database passwords are ECS secrets
+
+No task definition holds a database password in `environment`. Each task has a
+password-less URL (`DONOR_API_DATABASE_URL=postgresql://dad_api_login@<proxy>:5432/dad?...`)
+and the login's password as an ECS secret under the matching `..._DATABASE_PASSWORD`
+variable (valueFrom the login secret's `password` key). The URL form is used rather than
+separate host/name/user parts because it keeps `default_query_exec_mode=exec`, which the RDS
+Proxy needs. Each execution role can read only the login secrets its task injects; the
+`app-deploy` role needs no secret access, since `ecs-pin-image.sh` copies `secrets` verbatim
+into the new revision.
+
+Deploy ordering: DAD-Main from commit 7506cbf accepts both forms (a full URL still wins),
+so deploy DAD-Main with 7506cbf first, then this change at any time after. Rolling this out
+before that DAD-Main release makes the processes fail to find a password. Rolling back
+either side is safe while the other still supports the form in use. Rotating a password
+changes the secret value only: restart the service, no redeploy of the template.
 
 ### 9. DAD-Quality runner: not deployed
 

@@ -72,7 +72,6 @@ describe('EdgeStack', () => {
     const services = new ServicesStack(app, 's', {
       env,
       config,
-      vpc: network.vpc,
       computeSubnets: network.computeSubnets,
       cluster: cluster.cluster,
       namespaceName: cluster.namespaceName,
@@ -104,6 +103,36 @@ describe('EdgeStack', () => {
       SecurityGroupIngress: Match.arrayWith([
         Match.objectLike({ FromPort: 8443, CidrIp: '0.0.0.0/0' }),
       ]),
+    });
+  });
+
+  it('admits Cloudflare ranges on the NLB security group for 80 and 443', () => {
+    const t = Template.fromStack(buildGraph('staging').network);
+    const nlbSg = Object.values(t.findResources('AWS::EC2::SecurityGroup')).find(
+      (sg) =>
+        String((sg.Properties as Record<string, unknown>).GroupDescription).startsWith(
+          'DAD NLB',
+        ),
+    );
+    const rules = ((nlbSg?.Properties as Record<string, unknown>)
+      .SecurityGroupIngress ?? []) as Array<Record<string, unknown>>;
+    for (const port of [80, 443]) {
+      expect(rules).toContainEqual(
+        expect.objectContaining({ FromPort: port, CidrIp: '104.16.0.0/13' }),
+      );
+      expect(rules).toContainEqual(
+        expect.objectContaining({ FromPort: port, CidrIpv6: '2606:4700::/32' }),
+      );
+    }
+    expect(rules.filter((r) => r.CidrIp === '0.0.0.0/0')).toHaveLength(0);
+  });
+
+  it('lets the NLB reach the nginx health listener', () => {
+    const t = Template.fromStack(buildGraph('staging').network);
+    t.hasResourceProperties('AWS::EC2::SecurityGroupIngress', {
+      FromPort: 8081,
+      ToPort: 8081,
+      Description: 'nginx health check from NLB',
     });
   });
 

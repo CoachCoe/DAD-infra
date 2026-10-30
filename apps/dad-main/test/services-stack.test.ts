@@ -161,10 +161,16 @@ describe('ServicesStack', () => {
       );
 
     it.each(['staging', 'production'] as const)('%s: workers are off by default', (env) => {
-      const c = counts(Template.fromStack(buildGraph(env).services));
+      const t = Template.fromStack(buildGraph(env).services);
+      const c = counts(t);
       for (const w of WORKERS) expect([w, c[w]]).toEqual([w, 0]);
-      // The HTTP services are unaffected.
-      for (const s of ['api', 'web', 'nginx']) expect(c[s]).toBeGreaterThan(0);
+      // The HTTP services are unaffected: their count is owned by autoscaling, whose
+      // floor is the configured desired count.
+      const mins = Object.values(
+        t.findResources('AWS::ApplicationAutoScaling::ScalableTarget'),
+      ).map((r) => r.Properties.MinCapacity);
+      expect(mins).toHaveLength(3);
+      for (const m of mins) expect(m).toBeGreaterThan(0);
     });
 
     it('turning the switch on runs each worker at its configured count', () => {
@@ -203,6 +209,104 @@ describe('ServicesStack', () => {
           }),
         ]),
       }),
+    });
+  });
+
+  describe('autoscaling', () => {
+    const targets = (t: Template) =>
+      Object.values(t.findResources('AWS::ApplicationAutoScaling::ScalableTarget'));
+    const policies = (t: Template) =>
+      Object.values(t.findResources('AWS::ApplicationAutoScaling::ScalingPolicy'));
+
+    it.each([
+      ['staging', { api: [1, 3], web: [1, 3], nginx: [1, 2] }],
+      ['production', { api: [2, 12], web: [2, 12], nginx: [2, 6] }],
+    ] as const)('%s: api, web and nginx scale between their desired count and the env max', (env, bounds) => {
+      const t = Template.fromStack(buildGraph(env).services);
+      const found = targets(t).map((r) => [
+        JSON.stringify(r.Properties.ResourceId),
+        r.Properties.MinCapacity,
+        r.Properties.MaxCapacity,
+      ]);
+      expect(found).toHaveLength(3);
+      for (const [name, [min, max]] of Object.entries(bounds)) {
+        const hit = found.find((f) => String(f[0]).includes(`service/`) && String(f[0]).includes(name === 'api' ? 'ApiService' : name === 'web' ? 'WebService' : 'NginxService'));
+        expect(hit).toBeDefined();
+        expect([hit![1], hit![2]]).toEqual([min, max]);
+      }
+      t.hasResourceProperties('AWS::ApplicationAutoScaling::ScalableTarget', {
+        ScalableDimension: 'ecs:service:DesiredCount',
+        ServiceNamespace: 'ecs',
+      });
+    });
+
+    it('tracks CPU for all three and memory for api and web, with slow scale-in', () => {
+      const t = Template.fromStack(buildGraph('production').services);
+      const byMetric = (metric: string) =>
+        policies(t).filter(
+          (p) =>
+            p.Properties.TargetTrackingScalingPolicyConfiguration.PredefinedMetricSpecification
+              .PredefinedMetricType === metric,
+        );
+      expect(byMetric('ECSServiceAverageCPUUtilization')).toHaveLength(3);
+      expect(byMetric('ECSServiceAverageMemoryUtilization')).toHaveLength(2);
+      for (const p of policies(t)) {
+        const c = p.Properties.TargetTrackingScalingPolicyConfiguration;
+        expect(p.Properties.PolicyType).toBe('TargetTrackingScaling');
+        expect(c.ScaleInCooldown).toBe(300);
+        expect(c.ScaleOutCooldown).toBe(60);
+      }
+      expect(byMetric('ECSServiceAverageCPUUtilization')[0].Properties
+        .TargetTrackingScalingPolicyConfiguration.TargetValue).toBe(60);
+    });
+
+    it('does not autoscale the workers', () => {
+      const t = Template.fromStack(buildGraph('production', { workersEnabled: true }).services);
+      expect(targets(t)).toHaveLength(3);
+    });
+
+    it('leaves the desired count out of the template for autoscaled services so a deploy does not reset them', () => {
+      const t = Template.fromStack(buildGraph('production', { workersEnabled: true }).services);
+      const services = Object.values(t.findResources('AWS::ECS::Service'));
+      const byName = (n: string) => services.find((s) => s.Properties.ServiceName === n)!;
+      for (const n of ['api', 'web', 'nginx']) {
+        expect(byName(n).Properties.DesiredCount).toBeUndefined();
+      }
+      expect(byName('stripe-worker').Properties.DesiredCount).toBe(1);
+    });
+
+    it('when switched off, pins the fixed desired counts and creates no scaling resources', () => {
+      const base = buildGraph('production').config.autoscaling;
+      const t = Template.fromStack(
+        buildGraph('production', { autoscaling: { ...base, enabled: false } }).services,
+      );
+      expect(targets(t)).toHaveLength(0);
+      const services = Object.values(t.findResources('AWS::ECS::Service'));
+      expect(services.find((s) => s.Properties.ServiceName === 'api')!.Properties.DesiredCount).toBe(2);
+    });
+
+    it('is configurable: a different max and no memory target', () => {
+      const base = buildGraph('staging').config.autoscaling;
+      const t = Template.fromStack(
+        buildGraph('staging', {
+          autoscaling: { ...base, api: { maxCount: 7, cpuTargetPercent: 50 } },
+        }).services,
+      );
+      expect(targets(t).map((r) => r.Properties.MaxCapacity)).toContain(7);
+      expect(
+        policies(t).filter((p) =>
+          JSON.stringify(p.Properties.ScalingTargetId).includes('Api'),
+        ),
+      ).toHaveLength(1);
+    });
+
+    it('refuses a max below the desired count', () => {
+      const base = buildGraph('production').config.autoscaling;
+      expect(() =>
+        buildGraph('production', {
+          autoscaling: { ...base, web: { maxCount: 1, cpuTargetPercent: 60 } },
+        }),
+      ).toThrow(/maxCount \(1\) is below the desired count \(2\)/);
     });
   });
 });

@@ -55,6 +55,3 @@ jobs:
         run: |
           npx cdk synth -c env=staging >/dev/null
           npx cdk synth -c env=production >/dev/null
-
-  # Merge to dev -> staging deploy. Skipped (green) until the account is
-  # bootstrapped and INFRA_DEPLOY_ROLE_ARN is set (matches DAD-Main's pattern).

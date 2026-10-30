@@ -49,7 +49,7 @@ echo "bootstrap-owner: owner role ready and owns database $DB_NAME"
 
 /** Inputs for {@link ownerBootstrapTaskDefinition}. */
 export interface OwnerBootstrapProps {
-  /** `dad-<env>` prefix; the family is `dad-maint-bootstrap-owner`. */
+  /** Fargate sizing; the task family is `dad-maint-bootstrap-owner`. */
   readonly size: TaskSize;
   readonly logGroup: logs.ILogGroup;
   /** The RDS instance endpoint address (not the proxy). */

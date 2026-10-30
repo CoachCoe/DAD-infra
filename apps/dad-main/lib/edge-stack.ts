@@ -5,6 +5,32 @@ import * as ecs from 'aws-cdk-lib/aws-ecs';
 import * as elbv2 from 'aws-cdk-lib/aws-elasticloadbalancingv2';
 import { EnvConfig } from './config';
 
+/** Cloudflare's published edge ranges (https://www.cloudflare.com/ips-v4, ips-v6). */
+const CLOUDFLARE_RANGES = [
+  '173.245.48.0/20',
+  '103.21.244.0/22',
+  '103.22.200.0/22',
+  '103.31.4.0/22',
+  '141.101.64.0/18',
+  '108.162.192.0/18',
+  '190.93.240.0/20',
+  '188.114.96.0/20',
+  '197.234.240.0/22',
+  '198.41.128.0/17',
+  '162.158.0.0/15',
+  '104.16.0.0/13',
+  '104.24.0.0/14',
+  '172.64.0.0/13',
+  '131.0.72.0/22',
+  '2400:cb00::/32',
+  '2606:4700::/32',
+  '2803:f800::/32',
+  '2405:b500::/32',
+  '2405:8100::/32',
+  '2a06:98c0::/29',
+  '2c0f:f248::/32',
+];
+
 /** Props for {@link EdgeStack}. */
 export interface EdgeStackProps extends cdk.StackProps {
   readonly config: EnvConfig;
@@ -26,10 +52,10 @@ export interface EdgeStackProps extends cdk.StackProps {
  * config.cloudflareIngressEnabled is set, the nginx SG's edge ingress is
  * restricted to Cloudflare's published ranges instead of the open internet.
  *
- * The ranges are a documented input (CDK context `cloudflareRanges` or the
- * default below) — never a hardcoded stale list. Refresh them with
- * scripts/refresh-cloudflare-ips.sh, which fetches
- * https://www.cloudflare.com/ips-v4 and ips-v6; feed the same lists here.
+ * The ranges come from CDK context `cloudflareRanges`, defaulting to Cloudflare's
+ * published lists (https://www.cloudflare.com/ips-v4 and ips-v6) as of the last review.
+ * The NLB's own security group admits only those ranges on 80/443; without a rule it
+ * admits nothing.
  */
 export class EdgeStack extends cdk.Stack {
   public readonly loadBalancer: elbv2.NetworkLoadBalancer;
@@ -95,10 +121,28 @@ export class EdgeStack extends cdk.Stack {
     });
 
     // --- Cloudflare ingress toggle --------------------------------------
-    // Ranges come from CDK context `cloudflareRanges` (comma/space separated)
-    // or the documented placeholder default. Refresh via
-    // scripts/refresh-cloudflare-ips.sh — do NOT hardcode a stale production
-    // list. When the toggle is OFF we open the edge ports to the internet.
+    // A load balancer with a security group drops everything its group does not allow,
+    // so the NLB group carries the public rules; nginx admits the NLB group (network
+    // stack) and, below, the same ranges.
+    const publicPorts = [80, 443];
+    for (const port of publicPorts) {
+      if (config.cloudflareIngressEnabled) {
+        for (const cidr of this.cloudflareRanges()) {
+          nlbSecurityGroup.addIngressRule(
+            cidr.includes(':') ? ec2.Peer.ipv6(cidr) : ec2.Peer.ipv4(cidr),
+            ec2.Port.tcp(port),
+            `NLB ${port} from Cloudflare ${cidr}`,
+          );
+        }
+      } else {
+        nlbSecurityGroup.addIngressRule(
+          ec2.Peer.anyIpv4(),
+          ec2.Port.tcp(port),
+          `NLB ${port} from internet (cloudflare toggle off)`,
+        );
+      }
+    }
+
     const edgePorts = [
       { port: 8080, label: 'http' },
       { port: 8443, label: 'https' },
@@ -132,13 +176,7 @@ export class EdgeStack extends cdk.Stack {
     });
   }
 
-  /**
-   * Resolve the Cloudflare ranges list. Prefer CDK context so operators can
-   * pass the freshly fetched list; otherwise use a small documented default
-   * (a representative subset, NOT the authoritative list). The authoritative
-   * source is scripts/refresh-cloudflare-ips.sh → https://www.cloudflare.com/ips-v4
-   * and ips-v6.
-   */
+  /** Cloudflare ranges: CDK context `cloudflareRanges` (list or comma/space separated), else the default. */
   private cloudflareRanges(): string[] {
     const ctx = this.node.tryGetContext('cloudflareRanges') as
       | string
@@ -150,8 +188,6 @@ export class EdgeStack extends cdk.Stack {
     if (typeof ctx === 'string' && ctx.trim() !== '') {
       return ctx.split(/[\s,]+/).filter((s) => s !== '');
     }
-    // Documented placeholder default (subset of Cloudflare's published ranges).
-    // Replace at deploy time with the output of refresh-cloudflare-ips.sh.
-    return ['173.245.48.0/20', '103.21.244.0/22', '2400:cb00::/32'];
+    return CLOUDFLARE_RANGES;
   }
 }

@@ -36,4 +36,34 @@ describe('DataStack', () => {
     const customResources = t.findResources('Custom::AWS');
     expect(Object.keys(customResources)).toHaveLength(0);
   });
+
+  it('keeps the database private, backed up, and observable', () => {
+    for (const name of ['staging', 'production'] as const) {
+      const t = Template.fromStack(buildGraph(name).data);
+      t.hasResourceProperties('AWS::RDS::DBInstance', {
+        PubliclyAccessible: false,
+        BackupRetentionPeriod: Match.anyValue(),
+        EnablePerformanceInsights: true,
+        EnableCloudwatchLogsExports: ['postgresql'],
+      });
+    }
+  });
+
+  it('retains and protects the production database, not staging', () => {
+    const prod = Template.fromStack(buildGraph('production').data);
+    prod.hasResource('AWS::RDS::DBInstance', {
+      DeletionPolicy: 'Retain',
+      Properties: { DeletionProtection: true, BackupRetentionPeriod: 14 },
+    });
+    const staging = Template.fromStack(buildGraph('staging').data);
+    staging.hasResourceProperties('AWS::RDS::DBInstance', {
+      DeletionProtection: false,
+      BackupRetentionPeriod: 7,
+    });
+  });
+
+  it('requires TLS on the proxy', () => {
+    const t = Template.fromStack(buildGraph('staging').data);
+    t.hasResourceProperties('AWS::RDS::DBProxy', { RequireTLS: true });
+  });
 });

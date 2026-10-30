@@ -1,10 +1,10 @@
-import * as cdk from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 import * as ecs from 'aws-cdk-lib/aws-ecs';
 import * as ecr from 'aws-cdk-lib/aws-ecr';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import { TaskSize } from './config';
+import { buildPasswordlessDatabaseUrl, passwordVariable, ProcessLogin } from './db-url';
 
 /** The application and SMTP secrets the task definitions inject as env vars. */
 export interface AppSecrets {
@@ -26,6 +26,39 @@ export function secretFields(
   return Object.fromEntries(
     fields.map((f) => [f, ecs.Secret.fromSecretsManager(secret, f)]),
   );
+}
+
+/** Where one task reads its database connection from. */
+export interface DatabaseConnection {
+  /** Plain environment: the password-less URL under the login's URL variable. */
+  readonly environment: Record<string, string>;
+  /** ECS secret: the login secret's `password` key under `<PREFIX>_PASSWORD`. */
+  readonly secrets: Record<string, ecs.Secret>;
+}
+
+/**
+ * A task's database connection: a password-less URL in `environment` and the password as
+ * an ECS secret, so no task-definition value holds it. The execution role is granted read
+ * on exactly this login's secret by the `ecs.Secret` reference.
+ */
+export function databaseConnection(
+  login: ProcessLogin,
+  loginSecret: secretsmanager.ISecret,
+  proxyEndpoint: string,
+  db: string,
+): DatabaseConnection {
+  return {
+    environment: {
+      [login.envVar]: buildPasswordlessDatabaseUrl({
+        login: login.login,
+        proxyEndpoint,
+        db,
+      }),
+    },
+    secrets: {
+      [passwordVariable(login.envVar)]: ecs.Secret.fromSecretsManager(loginSecret, 'password'),
+    },
+  };
 }
 
 /** Which built image a task runs. */
@@ -124,17 +157,4 @@ export class TaskFactory {
 
     return { taskDefinition, container };
   }
-}
-
-/**
- * Convert a Secrets Manager secret holding a JSON blob with a `password` field
- * into an ECS task secret. Shared helper for DB password injection, though DB
- * URLs themselves are injected as plain env (the URL embeds the password, built
- * from the resolved secret value via CfnDynamicReference where needed).
- */
-export function jsonFieldSecret(
-  secret: { secretValueFromJson: (key: string) => cdk.SecretValue },
-  field: string,
-): cdk.SecretValue {
-  return secret.secretValueFromJson(field);
 }

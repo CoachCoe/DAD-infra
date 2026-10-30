@@ -1,7 +1,9 @@
 import * as cdk from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
+import * as logs from 'aws-cdk-lib/aws-logs';
 import { EnvConfig } from './config';
+import { toRetentionDays } from './ecs-cluster-stack';
 
 /** Props for {@link NetworkStack}. */
 export interface NetworkStackProps extends cdk.StackProps {
@@ -43,6 +45,10 @@ export class NetworkStack extends cdk.Stack {
   public readonly workersSecurityGroup: ec2.SecurityGroup;
   /** SG for the RDS Proxy. */
   public readonly proxySecurityGroup: ec2.SecurityGroup;
+  /** SG on the interface endpoints (443 from the compute tier); undefined when they are off. */
+  public readonly endpointSecurityGroup?: ec2.SecurityGroup;
+  /** Log group the VPC flow logs are delivered to. */
+  public readonly flowLogGroup: logs.LogGroup;
 
   /** Subnet selection for the private-with-egress compute tier. */
   public readonly computeSubnets: ec2.SubnetSelection;
@@ -150,6 +156,13 @@ export class NetworkStack extends cdk.Stack {
       'nginx https from NLB',
     );
 
+    // The NLB health check probes the nginx health listener.
+    this.nginxSecurityGroup.addIngressRule(
+      this.nlbSecurityGroup,
+      ec2.Port.tcp(8081),
+      'nginx health check from NLB',
+    );
+
     // web accepts 3000 from nginx only.
     this.webSecurityGroup.addIngressRule(
       this.nginxSecurityGroup,
@@ -179,6 +192,69 @@ export class NetworkStack extends cdk.Stack {
     // RDS SG ingress (proxy → RDS:5432) is created inside DataStack alongside
     // the RDS instance to keep that bidirectional wiring in a single stack and
     // avoid a cross-stack dependency cycle.
+
+    // --- VPC endpoints --------------------------------------------------
+    // Keep image pulls, secret resolution and log delivery for the compute tier on the
+    // AWS network instead of the NAT gateway. The NAT stays for everything else
+    // (Stripe, SMTP, APNs/FCM).
+    //
+    // The S3 gateway endpoint is free (ECR image layers are served from S3). The
+    // interface endpoints cost per AZ-hour, so config.interfaceEndpointsEnabled can
+    // turn them off (staging). No STS endpoint: the tasks make no STS calls; the
+    // credentials ECS hands them come from the container credentials endpoint.
+    this.vpc.addGatewayEndpoint('S3Endpoint', {
+      service: ec2.GatewayVpcEndpointAwsService.S3,
+      subnets: [this.computeSubnets],
+    });
+
+    if (config.interfaceEndpointsEnabled) {
+      const endpointSg = new ec2.SecurityGroup(this, 'EndpointSg', {
+        vpc: this.vpc,
+        description: 'DAD interface VPC endpoints (HTTPS from the compute tier).',
+        allowAllOutbound: false,
+      });
+      for (const [sg, label] of [
+        [this.nginxSecurityGroup, 'nginx'],
+        [this.webSecurityGroup, 'web'],
+        [this.apiSecurityGroup, 'api'],
+        [this.workersSecurityGroup, 'workers'],
+      ] as const) {
+        endpointSg.addIngressRule(sg, ec2.Port.tcp(443), `HTTPS from ${label}`);
+      }
+      this.endpointSecurityGroup = endpointSg;
+
+      const interfaceEndpoints: Array<[string, ec2.InterfaceVpcEndpointAwsService]> = [
+        ['EcrApiEndpoint', ec2.InterfaceVpcEndpointAwsService.ECR],
+        ['EcrDkrEndpoint', ec2.InterfaceVpcEndpointAwsService.ECR_DOCKER],
+        ['SecretsManagerEndpoint', ec2.InterfaceVpcEndpointAwsService.SECRETS_MANAGER],
+        ['LogsEndpoint', ec2.InterfaceVpcEndpointAwsService.CLOUDWATCH_LOGS],
+      ];
+      for (const [endpointId, service] of interfaceEndpoints) {
+        this.vpc.addInterfaceEndpoint(endpointId, {
+          service,
+          subnets: this.computeSubnets,
+          securityGroups: [endpointSg],
+          privateDnsEnabled: true,
+          // Ingress comes only from endpointSg (the compute-tier groups), not the VPC CIDR.
+          open: false,
+        });
+      }
+    }
+
+    // --- VPC flow logs --------------------------------------------------
+    // All traffic (accepted and rejected) to CloudWatch Logs with the configured
+    // retention.
+    this.flowLogGroup = new logs.LogGroup(this, 'FlowLogs', {
+      logGroupName: `/dad/${config.env}/vpc-flow-logs`,
+      retention: toRetentionDays(config.flowLogRetentionDays),
+      removalPolicy: config.deletionProtection
+        ? cdk.RemovalPolicy.RETAIN
+        : cdk.RemovalPolicy.DESTROY,
+    });
+    this.vpc.addFlowLog('FlowLog', {
+      destination: ec2.FlowLogDestination.toCloudWatchLogs(this.flowLogGroup),
+      trafficType: ec2.FlowLogTrafficType.ALL,
+    });
 
     // --- Outputs --------------------------------------------------------
     // Stable, human-named CfnOutputs consumed by the app pipeline

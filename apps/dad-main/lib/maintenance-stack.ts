@@ -6,20 +6,27 @@ import * as ecr from 'aws-cdk-lib/aws-ecr';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import * as sns from 'aws-cdk-lib/aws-sns';
+import * as snsSubs from 'aws-cdk-lib/aws-sns-subscriptions';
 import * as cloudwatch from 'aws-cdk-lib/aws-cloudwatch';
 import * as cwActions from 'aws-cdk-lib/aws-cloudwatch-actions';
 import * as scheduler from 'aws-cdk-lib/aws-scheduler';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import { EnvConfig } from './config';
+import { toRetentionDays } from './ecs-cluster-stack';
 import { imageTagFor } from './image-tag';
 import { ownerBootstrapTaskDefinition } from './db-bootstrap';
 import {
-  buildDatabaseUrl,
   PROCESS_LOGINS,
   OWNER_LOGIN,
   ProcessLogin,
 } from './db-url';
-import { AppSecrets, secretFields, TaskFactory } from './task-factory';
+import {
+  AppSecrets,
+  databaseConnection,
+  DatabaseConnection,
+  secretFields,
+  TaskFactory,
+} from './task-factory';
 
 /** Props for {@link MaintenanceStack}. */
 export interface MaintenanceStackProps extends cdk.StackProps {
@@ -81,35 +88,21 @@ export class MaintenanceStack extends cdk.Stack {
 
     const log = new logs.LogGroup(this, 'MaintenanceLogs', {
       logGroupName: `/dad/${config.env}/maintenance`,
-      retention:
-        config.env === 'production'
-          ? logs.RetentionDays.ONE_YEAR
-          : logs.RetentionDays.ONE_MONTH,
+      retention: toRetentionDays(config.logRetentionDays),
       removalPolicy: config.deletionProtection
         ? cdk.RemovalPolicy.RETAIN
         : cdk.RemovalPolicy.DESTROY,
     });
 
-    const dbUrl = (login: ProcessLogin): string => {
-      const secret = loginSecrets[login.login];
-      const password = secret.secretValueFromJson('password').unsafeUnwrap();
-      return buildDatabaseUrl({
-        login: login.login,
-        password,
-        proxyEndpoint,
-        db: config.dbName,
-      });
-    };
+    const db = (login: ProcessLogin) =>
+      databaseConnection(login, loginSecrets[login.login], proxyEndpoint, config.dbName);
+    const merge = (...parts: DatabaseConnection[]): DatabaseConnection => ({
+      environment: Object.assign({}, ...parts.map((p) => p.environment)),
+      secrets: Object.assign({}, ...parts.map((p) => p.secrets)),
+    });
 
-    const ownerUrl = dbUrl(OWNER_LOGIN);
-
-    // Env for provision-roles: owner + every per-process DONOR_*_DATABASE_URL.
-    const provisionEnv: Record<string, string> = {
-      [OWNER_LOGIN.envVar]: ownerUrl,
-    };
-    for (const p of Object.values(PROCESS_LOGINS)) {
-      provisionEnv[p.envVar] = dbUrl(p);
-    }
+    // provision-roles: the owner plus every per-process login.
+    const provisionDb = merge(db(OWNER_LOGIN), ...Object.values(PROCESS_LOGINS).map(db));
 
     const defineTask = (
       taskId: string,
@@ -132,26 +125,26 @@ export class MaintenanceStack extends cdk.Stack {
     };
 
     // --- five one-off maintenance task definitions ----------------------
-    defineTask('migrate', ['migrate'], {
-      [OWNER_LOGIN.envVar]: ownerUrl,
-    });
-    defineTask('provision-roles', ['provision'], provisionEnv);
-    defineTask('staff', ['staff'], {
-      DONOR_STAFF_ORIGIN: config.staffOrigin,
-      [PROCESS_LOGINS.staff.envVar]: dbUrl(PROCESS_LOGINS.staff),
-    });
+    const ownerDb = db(OWNER_LOGIN);
+    defineTask('migrate', ['migrate'], ownerDb.environment, ownerDb.secrets);
+    defineTask('provision-roles', ['provision'], provisionDb.environment, provisionDb.secrets);
+    const staffDb = db(PROCESS_LOGINS.staff);
     defineTask(
-      'rekey',
-      ['rekey'],
-      { [PROCESS_LOGINS.rekey.envVar]: dbUrl(PROCESS_LOGINS.rekey) },
-      secretFields(appSecrets.encryption, [
+      'staff',
+      ['staff'],
+      { DONOR_STAFF_ORIGIN: config.staffOrigin, ...staffDb.environment },
+      staffDb.secrets,
+    );
+    const rekeyDb = db(PROCESS_LOGINS.rekey);
+    defineTask('rekey', ['rekey'], rekeyDb.environment, {
+      ...rekeyDb.secrets,
+      ...secretFields(appSecrets.encryption, [
         'DONOR_EMAIL_ENCRYPTION_KEY',
         'DONOR_CONTENT_ENCRYPTION_KEY',
       ]),
-    );
-    defineTask('monitor', ['monitor'], {
-      [PROCESS_LOGINS.monitor.envVar]: dbUrl(PROCESS_LOGINS.monitor),
     });
+    const monitorDb = db(PROCESS_LOGINS.monitor);
+    defineTask('monitor', ['monitor'], monitorDb.environment, monitorDb.secrets);
 
     // --- owner bootstrap (first deploy only; see docs/bootstrap.md) -------
     // Creates the `owner` role as the RDS master. The only task that can read the master
@@ -166,23 +159,28 @@ export class MaintenanceStack extends cdk.Stack {
     });
 
     // --- reconcile task definition --------------------------------------
+    const reconcileDb = db(PROCESS_LOGINS.reconcile);
     const reconcileTask = defineTask(
       'reconcile',
       ['reconcile'],
-      {
-        DONOR_STRIPE_REQUESTS_PER_SECOND: '25',
-        [PROCESS_LOGINS.reconcile.envVar]: dbUrl(PROCESS_LOGINS.reconcile),
-      },
-      secretFields(appSecrets.stripe, ['STRIPE_SECRET_KEY']),
+      { DONOR_STRIPE_REQUESTS_PER_SECOND: '25', ...reconcileDb.environment },
+      { ...reconcileDb.secrets, ...secretFields(appSecrets.stripe, ['STRIPE_SECRET_KEY']) },
     );
 
     // --- SNS topic for alarms -------------------------------------------
-    this.alarmTopic =
-      props.alarmTopic ??
-      new sns.Topic(this, 'MaintenanceAlarms', {
+    if (props.alarmTopic) {
+      this.alarmTopic = props.alarmTopic;
+    } else {
+      const topic = new sns.Topic(this, 'MaintenanceAlarms', {
         topicName: `dad-${config.env}-maintenance-alarms`,
         displayName: `DAD ${config.env} maintenance alarms`,
       });
+      const email = this.node.tryGetContext('alarmEmail') as string | undefined;
+      if (email) {
+        topic.addSubscription(new snsSubs.EmailSubscription(email));
+      }
+      this.alarmTopic = topic;
+    }
 
     // --- EventBridge Scheduler: reconcile daily ~00:30 America/New_York --
     const schedulerRole = new iam.Role(this, 'ReconcileSchedulerRole', {
