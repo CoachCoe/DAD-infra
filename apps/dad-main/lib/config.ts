@@ -48,6 +48,33 @@ export interface TaskSizes {
 }
 
 /**
+ * Target-tracking autoscaling for one service. The floor is the service's desired count
+ * (`desiredCounts`), so scaling can only add capacity above what the environment is
+ * sized for.
+ */
+export interface ServiceScaling {
+  /** Most tasks the service may scale out to. Must be at least its desired count. */
+  readonly maxCount: number;
+  /** Average CPU utilisation (percent) the service is scaled to hold. */
+  readonly cpuTargetPercent: number;
+  /** Average memory utilisation (percent) to hold; omit to scale on CPU alone. */
+  readonly memoryTargetPercent?: number;
+}
+
+/**
+ * Autoscaling for the three request-serving services. There is no ALB request-count
+ * signal: traffic enters through a Network Load Balancer, which has no per-target
+ * request metric, so scaling follows CPU (and memory where it tracks load). The workers
+ * are fixed at `desiredCounts.workers`.
+ */
+export interface AutoscalingConfig {
+  readonly enabled: boolean;
+  readonly api: ServiceScaling;
+  readonly web: ServiceScaling;
+  readonly nginx: ServiceScaling;
+}
+
+/**
  * Resolved, fully-typed configuration for a single environment.
  *
  * Extends the shared core (`env`, `account`, `region`) with the DAD-Main
@@ -74,6 +101,17 @@ export interface EnvConfig extends SharedEnvConfig {
   readonly desiredCounts: DesiredCounts;
   /** Fargate task sizes per service tier. */
   readonly taskSizes: TaskSizes;
+  /** Target-tracking autoscaling for api, web and nginx. */
+  readonly autoscaling: AutoscalingConfig;
+  /**
+   * Whether the interface VPC endpoints (ECR api and dkr, Secrets Manager, CloudWatch
+   * Logs) are created. Each costs per AZ-hour plus data, so staging leaves them off
+   * and pulls/logs/secrets go through the NAT gateway. The S3 gateway endpoint is free
+   * and always created.
+   */
+  readonly interfaceEndpointsEnabled: boolean;
+  /** CloudWatch retention in days for the VPC flow logs. */
+  readonly flowLogRetentionDays: number;
   /** Dedicated SES sending subdomain (e.g. mail.staging.dynamicaid.org). */
   readonly sendingSubdomain: string;
   /** Whether the nginx ingress SG is restricted to Cloudflare ranges. */
@@ -123,6 +161,20 @@ const PRODUCTION_TASK_SIZES: TaskSizes = {
   worker: { cpu: 512, memoryMiB: 1024 },
 };
 
+const STAGING_AUTOSCALING: AutoscalingConfig = {
+  enabled: true,
+  api: { maxCount: 3, cpuTargetPercent: 60, memoryTargetPercent: 75 },
+  web: { maxCount: 3, cpuTargetPercent: 60, memoryTargetPercent: 75 },
+  nginx: { maxCount: 2, cpuTargetPercent: 60 },
+};
+
+const PRODUCTION_AUTOSCALING: AutoscalingConfig = {
+  enabled: true,
+  api: { maxCount: 12, cpuTargetPercent: 60, memoryTargetPercent: 75 },
+  web: { maxCount: 12, cpuTargetPercent: 60, memoryTargetPercent: 75 },
+  nginx: { maxCount: 6, cpuTargetPercent: 60 },
+};
+
 const STAGING: AppFields = {
   publicHost: 'app.staging.dynamicaid.org',
   staffHost: 'staff.staging.dynamicaid.org',
@@ -134,6 +186,9 @@ const STAGING: AppFields = {
   logRetentionDays: 30,
   desiredCounts: { api: 1, web: 1, nginx: 1, workers: 1 },
   taskSizes: STAGING_TASK_SIZES,
+  autoscaling: STAGING_AUTOSCALING,
+  interfaceEndpointsEnabled: false,
+  flowLogRetentionDays: 30,
   sendingSubdomain: 'mail.staging.dynamicaid.org',
   cloudflareIngressEnabled: true,
   // Off until the environment is ready to send mail and talk to Stripe (docs/bootstrap.md).
@@ -152,6 +207,9 @@ const PRODUCTION: AppFields = {
   logRetentionDays: 365,
   desiredCounts: { api: 2, web: 2, nginx: 2, workers: 1 },
   taskSizes: PRODUCTION_TASK_SIZES,
+  autoscaling: PRODUCTION_AUTOSCALING,
+  interfaceEndpointsEnabled: true,
+  flowLogRetentionDays: 365,
   sendingSubdomain: 'mail.dynamicaid.org',
   cloudflareIngressEnabled: true,
   workersEnabled: false,

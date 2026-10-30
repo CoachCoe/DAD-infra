@@ -10,6 +10,7 @@ import { buildDatabaseUrl, PROCESS_LOGINS, ProcessLogin } from './db-url';
 import { ServiceName } from './ecs-cluster-stack';
 import { imageTagFor } from './image-tag';
 import { AppSecrets, secretFields, TaskFactory } from './task-factory';
+import { ServiceScaling } from './config';
 
 /** Props for {@link ServicesStack}. */
 export interface ServicesStackProps extends cdk.StackProps {
@@ -55,8 +56,50 @@ interface WorkerSpec {
 export class ServicesStack extends cdk.Stack {
   public readonly services: Record<ServiceName, ecs.FargateService>;
 
+  private config!: ServicesStackProps['config'];
+
+  /**
+   * The desired count to put in the template. Omitted for an autoscaled service: with
+   * a count in the template every `cdk deploy` would reset a scaled-out service back
+   * to it. The scaling floor (the configured count) is then the effective minimum.
+   */
+  private initialCount(name: 'api' | 'web' | 'nginx'): number | undefined {
+    return this.config.autoscaling.enabled ? undefined : this.config.desiredCounts[name];
+  }
+
+  /** Target-tracking scaling on CPU, and memory when the service configures it. */
+  private autoscale(
+    name: 'api' | 'web' | 'nginx',
+    service: ecs.FargateService,
+    scaling: ServiceScaling,
+  ): void {
+    const min = this.config.desiredCounts[name];
+    if (scaling.maxCount < min) {
+      throw new Error(
+        `autoscaling.${name}.maxCount (${scaling.maxCount}) is below the desired count (${min})`,
+      );
+    }
+    const target = service.autoScaleTaskCount({
+      minCapacity: min,
+      maxCapacity: scaling.maxCount,
+    });
+    target.scaleOnCpuUtilization(`${name}-Cpu`, {
+      targetUtilizationPercent: scaling.cpuTargetPercent,
+      scaleOutCooldown: cdk.Duration.minutes(1),
+      scaleInCooldown: cdk.Duration.minutes(5),
+    });
+    if (scaling.memoryTargetPercent !== undefined) {
+      target.scaleOnMemoryUtilization(`${name}-Memory`, {
+        targetUtilizationPercent: scaling.memoryTargetPercent,
+        scaleOutCooldown: cdk.Duration.minutes(1),
+        scaleInCooldown: cdk.Duration.minutes(5),
+      });
+    }
+  }
+
   constructor(scope: Construct, id: string, props: ServicesStackProps) {
     super(scope, id, props);
+    this.config = props.config;
 
     const {
       config,
@@ -156,7 +199,7 @@ export class ServicesStack extends cdk.Stack {
       cluster,
       serviceName: 'api',
       taskDefinition: api.taskDefinition,
-      desiredCount: config.desiredCounts.api,
+      desiredCount: this.initialCount('api'),
       vpcSubnets: computeSubnets,
       securityGroups: [apiSecurityGroup],
       // Register `api` in Service Connect so web resolves http://api:8002.
@@ -203,7 +246,7 @@ export class ServicesStack extends cdk.Stack {
       cluster,
       serviceName: 'web',
       taskDefinition: web.taskDefinition,
-      desiredCount: config.desiredCounts.web,
+      desiredCount: this.initialCount('web'),
       vpcSubnets: computeSubnets,
       securityGroups: [webSecurityGroup],
       // web is a Service Connect client (resolves api) but publishes nothing.
@@ -245,10 +288,16 @@ export class ServicesStack extends cdk.Stack {
       cluster,
       serviceName: 'nginx',
       taskDefinition: nginx.taskDefinition,
-      desiredCount: config.desiredCounts.nginx,
+      desiredCount: this.initialCount('nginx'),
       vpcSubnets: computeSubnets,
       securityGroups: [nginxSecurityGroup],
     });
+
+    if (config.autoscaling.enabled) {
+      this.autoscale('api', this.services.api, config.autoscaling.api);
+      this.autoscale('web', this.services.web, config.autoscaling.web);
+      this.autoscale('nginx', this.services.nginx, config.autoscaling.nginx);
+    }
 
     // --- the six workers ------------------------------------------------
     const workers: WorkerSpec[] = [
