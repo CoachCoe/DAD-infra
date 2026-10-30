@@ -184,6 +184,23 @@ definitions in the `dad-$ENV` cluster. These names are the generated names of th
 execution roles in those two stacks; do not give those roles explicit names unless the
 `PassTaskRoles` statement in `apps/dad-main/lib/pipeline-iam-stack.ts` is updated too.
 
+### Database passwords are ECS secrets
+
+No task definition holds a database password in `environment`. Each task has a
+password-less URL (`DONOR_API_DATABASE_URL=postgresql://dad_api_login@<proxy>:5432/dad?...`)
+and the login's password as an ECS secret under the matching `..._DATABASE_PASSWORD`
+variable (valueFrom the login secret's `password` key). The URL form is used rather than
+separate host/name/user parts because it keeps `default_query_exec_mode=exec`, which the RDS
+Proxy needs. Each execution role can read only the login secrets its task injects; the
+`app-deploy` role needs no secret access, since `ecs-pin-image.sh` copies `secrets` verbatim
+into the new revision.
+
+Deploy ordering: DAD-Main from commit 7506cbf accepts both forms (a full URL still wins),
+so deploy DAD-Main with 7506cbf first, then this change at any time after. Rolling this out
+before that DAD-Main release makes the processes fail to find a password. Rolling back
+either side is safe while the other still supports the form in use. Rotating a password
+changes the secret value only: restart the service, no redeploy of the template.
+
 ### 9. DAD-Quality runner: not deployed
 
 Do not deploy `apps/atm`. DAD-Main's ATM gate and its Worker ledger are the single source

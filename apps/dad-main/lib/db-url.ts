@@ -46,6 +46,30 @@ export function buildDatabaseUrl(parts: DatabaseUrlParts): string {
   return `postgresql://${login}:${password}@${proxyEndpoint}:5432/${db}${DB_URL_QUERY_STRING}`;
 }
 
+/**
+ * The same URL without a password: `postgresql://<login>@<proxyEndpoint>:5432/<db>?...`.
+ *
+ * DAD-Main accepts this form together with `<PREFIX>_PASSWORD` (see
+ * {@link passwordVariable}), so the password reaches the process as an ECS secret and
+ * never sits in a task-definition `environment` value. The URL, rather than separate
+ * HOST/NAME/USER parts, keeps `default_query_exec_mode=exec`, which the RDS Proxy needs and
+ * the parts form cannot express.
+ */
+export function buildPasswordlessDatabaseUrl(
+  parts: Omit<DatabaseUrlParts, 'password'>,
+): string {
+  const { login, proxyEndpoint, db } = parts;
+  return `postgresql://${login}@${proxyEndpoint}:5432/${db}${DB_URL_QUERY_STRING}`;
+}
+
+/** The env var carrying the password for a `..._DATABASE_URL` variable. */
+export function passwordVariable(urlEnvVar: string): string {
+  if (!urlEnvVar.endsWith('_URL')) {
+    throw new Error(`not a database URL variable: ${urlEnvVar}`);
+  }
+  return `${urlEnvVar.slice(0, -'_URL'.length)}_PASSWORD`;
+}
+
 /** One per-process database role and the env var its URL is injected as. */
 export interface ProcessLogin {
   /** PostgreSQL login/role name. */
