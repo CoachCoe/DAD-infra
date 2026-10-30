@@ -58,4 +58,22 @@ describe('getConfig', () => {
       }
     }
   });
+
+  it('sizes autoscaling at or above the desired counts, with a larger ceiling in production', () => {
+    for (const name of ['staging', 'production'] as const) {
+      const c = getConfig(name);
+      expect(c.autoscaling.enabled).toBe(true);
+      for (const svc of ['api', 'web', 'nginx'] as const) {
+        expect(c.autoscaling[svc].maxCount).toBeGreaterThanOrEqual(c.desiredCounts[svc]);
+      }
+    }
+    expect(getConfig('production').autoscaling.api.maxCount).toBeGreaterThan(
+      getConfig('staging').autoscaling.api.maxCount,
+    );
+  });
+
+  it('keeps the interface endpoints off in staging and on in production', () => {
+    expect(getConfig('staging').interfaceEndpointsEnabled).toBe(false);
+    expect(getConfig('production').interfaceEndpointsEnabled).toBe(true);
+  });
 });

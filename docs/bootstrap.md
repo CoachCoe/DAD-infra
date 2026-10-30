@@ -171,6 +171,19 @@ switch: it sets their desired count, and DAD-Main's `deploy.yml` rolls only serv
 reports as running. Turn them on once mail (SES out of sandbox, a working SMTP password)
 and, if used, Stripe are configured.
 
+### Autoscaled services and the app-deploy role
+
+api, web and nginx scale between their `desiredCounts` and `autoscaling.<service>.maxCount`.
+Their desired count is not in the template, so a later `cdk deploy` leaves a scaled-out
+service where it is. To resize permanently, change `desiredCounts` (the floor) or
+`maxCount` and deploy.
+
+The `app-deploy` role may pass only roles named `dad-services-$ENV-*` and
+`dad-maintenance-$ENV-*` to ECS tasks, and may run only the `dad-maint-*` task
+definitions in the `dad-$ENV` cluster. These names are the generated names of the task and
+execution roles in those two stacks; do not give those roles explicit names unless the
+`PassTaskRoles` statement in `apps/dad-main/lib/pipeline-iam-stack.ts` is updated too.
+
 ### 9. DAD-Quality runner: not deployed
 
 Do not deploy `apps/atm`. DAD-Main's ATM gate and its Worker ledger are the single source

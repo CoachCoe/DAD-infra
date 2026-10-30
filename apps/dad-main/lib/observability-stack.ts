@@ -28,13 +28,14 @@ export interface ObservabilityStackProps extends cdk.StackProps {
  * ObservabilityStack.
  *
  * One SNS topic (optional email subscription), a per-service alarm for ECS
- * health (running task count below desired), database CPU and storage alarms, and a
- * monitor queue-age placeholder alarm. All alarms notify the SNS topic.
+ * health (running task count below desired), and database CPU and storage alarms. All
+ * alarms notify the SNS topic. The `monitor` task publishes no metric (it exits nonzero
+ * when a queue is stale, and is scheduled and alerted on outside AWS), so there is
+ * deliberately no queue-age alarm.
  */
 export class ObservabilityStack extends cdk.Stack {
   public readonly topic: sns.Topic;
   public readonly serviceHealthAlarms: cloudwatch.Alarm[] = [];
-  public readonly monitorQueueAgeAlarm: cloudwatch.Alarm;
 
   constructor(scope: Construct, id: string, props: ObservabilityStackProps) {
     super(scope, id, props);
@@ -119,32 +120,6 @@ export class ObservabilityStack extends cdk.Stack {
         treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
       }).addAlarmAction(action);
     }
-
-    // --- monitor queue-age placeholder ----------------------------------
-    // The `monitor` task publishes a queue-age metric; until that metric name
-    // is finalized this is a placeholder alarm on a custom metric so the wiring
-    // and SNS action exist. Tune the metric/threshold when monitor lands.
-    this.monitorQueueAgeAlarm = new cloudwatch.Alarm(
-      this,
-      'MonitorQueueAge',
-      {
-        alarmName: `dad-${config.env}-monitor-queue-age`,
-        alarmDescription:
-          'Placeholder: oldest unprocessed queue item age exceeded threshold.',
-        metric: new cloudwatch.Metric({
-          namespace: `DAD/${config.env}/Monitor`,
-          metricName: 'QueueAgeSeconds',
-          statistic: 'Maximum',
-          period: cdk.Duration.minutes(5),
-        }),
-        threshold: 900,
-        evaluationPeriods: 1,
-        comparisonOperator:
-          cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
-        treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
-      },
-    );
-    this.monitorQueueAgeAlarm.addAlarmAction(action);
 
     new cdk.CfnOutput(this, 'AlarmTopicArn', { value: this.topic.topicArn });
   }
