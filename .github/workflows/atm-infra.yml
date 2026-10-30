@@ -74,7 +74,9 @@ jobs:
       - run: npm run build
       # Unit tests for every workspace, including the SMTP rotation function's Python
       # tests (run by jest). Part of the required `synth` check.
-      - run: npx jest --ci
+      # Each suite synthesizes the whole CDK app, which is memory-heavy: cap the workers
+      # and recycle any that grow past 1 GB (one ran out of memory with the defaults).
+      - run: npx jest --ci --maxWorkers=2 --workerIdleMemoryLimit=1024MB
       # Offline validation: synth both environments with dummy account/region.
       # This is the real PR signal and needs no AWS credentials.
       - name: cdk synth (staging + production, offline)
