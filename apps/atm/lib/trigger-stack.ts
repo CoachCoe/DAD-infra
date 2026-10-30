@@ -36,9 +36,20 @@ export class TriggerStack extends cdk.Stack {
 
     const { config, project } = props;
 
+    // Confused-deputy guard: only this account's EventBridge Scheduler, acting for this
+    // stack's own schedule, may assume the role. The ARN is built from the schedule name
+    // (not a reference to the schedule resource, which depends on this role).
+    const scheduleName = `${config.prefix}-nightly-${config.env}`;
+    const scheduleArn = `arn:aws:scheduler:${this.region}:${this.account}:schedule/default/${scheduleName}`;
+
     this.schedulerRole = new iam.Role(this, 'SchedulerRole', {
       roleName: `${config.prefix}-scheduler-${config.env}`,
-      assumedBy: new iam.ServicePrincipal('scheduler.amazonaws.com'),
+      assumedBy: new iam.ServicePrincipal('scheduler.amazonaws.com', {
+        conditions: {
+          StringEquals: { 'aws:SourceAccount': this.account },
+          ArnEquals: { 'aws:SourceArn': scheduleArn },
+        },
+      }),
       description: `Lets EventBridge Scheduler start the ${config.prefix} runner (${config.env}).`,
     });
     this.schedulerRole.addToPolicy(
@@ -50,7 +61,7 @@ export class TriggerStack extends cdk.Stack {
     );
 
     new scheduler.CfnSchedule(this, 'NightlySchedule', {
-      name: `${config.prefix}-nightly-${config.env}`,
+      name: scheduleName,
       flexibleTimeWindow: { mode: 'OFF' },
       scheduleExpression: props.scheduleExpression ?? 'cron(0 7 * * ? *)',
       target: {

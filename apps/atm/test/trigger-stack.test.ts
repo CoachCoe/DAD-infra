@@ -80,6 +80,27 @@ describe('TriggerStack', () => {
     }
   });
 
+  test('the scheduler role trusts only this account and this stack\'s schedule', () => {
+    for (const env of ['staging', 'production'] as const) {
+      const { trigger } = build(env);
+      trigger.hasResourceProperties('AWS::IAM::Role', {
+        RoleName: `atm-scheduler-${env}`,
+        AssumeRolePolicyDocument: {
+          Statement: [
+            Match.objectLike({
+              Condition: {
+                StringEquals: { 'aws:SourceAccount': '111111111111' },
+                ArnEquals: {
+                  'aws:SourceArn': `arn:aws:scheduler:us-east-2:111111111111:schedule/default/atm-nightly-${env}`,
+                },
+              },
+            }),
+          ],
+        },
+      });
+    }
+  });
+
   // DAD-Main CI deliberately cannot start a run yet (see trigger-stack.ts), and an
   // account has exactly one GitHub OIDC provider, which apps/dad-main owns. Two stacks
   // creating it would fail the second deploy.
