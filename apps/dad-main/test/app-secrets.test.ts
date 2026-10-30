@@ -11,7 +11,7 @@ function secretsByFamily(): Record<string, string[]> {
     const defs = Template.fromStack(stack).findResources('AWS::ECS::TaskDefinition') as Record<string, Def>;
     for (const def of Object.values(defs)) {
       const c = def.Properties.ContainerDefinitions[0];
-      out[def.Properties.Family] = ((c.Secrets ?? []) as Array<{ Name: string }>).map((s) => s.Name).sort();
+      out[def.Properties.Family] = ((c.Secrets ?? []) as Array<{ Name: string }>).map((s) => s.Name).filter((n) => !n.endsWith('_DATABASE_PASSWORD')).sort();
     }
   }
   return out;
@@ -29,7 +29,8 @@ const MAIL_WORKER = [
 describe('application secrets', () => {
   // Mirrors which variables docker-compose.prod.yml gives each process. Every process gets
   // exactly what it needs and nothing else: e.g. only Stripe-reading processes see the
-  // Stripe key, and only the mail workers see the relay password.
+  // Stripe key, and only the mail workers see the relay password. (Database passwords are
+  // covered by database-credentials.test.ts.)
   it('injects exactly the secrets each process reads', () => {
     expect(secretsByFamily()).toEqual({
       'dad-api': [

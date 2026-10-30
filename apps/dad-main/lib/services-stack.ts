@@ -6,10 +6,10 @@ import * as ecr from 'aws-cdk-lib/aws-ecr';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import { EnvConfig } from './config';
-import { buildDatabaseUrl, PROCESS_LOGINS, ProcessLogin } from './db-url';
+import { PROCESS_LOGINS } from './db-url';
 import { ServiceName } from './ecs-cluster-stack';
 import { imageTagFor } from './image-tag';
-import { AppSecrets, secretFields, TaskFactory } from './task-factory';
+import { AppSecrets, databaseConnection, secretFields, TaskFactory } from './task-factory';
 import { ServiceScaling } from './config';
 
 /** Props for {@link ServicesStack}. */
@@ -142,24 +142,17 @@ export class ServicesStack extends cdk.Stack {
     // COMPLETED, which is its deploy gate (no shell into running tasks needed).
     const rollout = { circuitBreaker: { rollback: true } };
 
-    // Build a per-process DB URL from the login secret's password field.
-    // The URL is a plain env var (as in Compose); the password resolves at
-    // deploy time via a {{resolve:secretsmanager:...}} dynamic reference.
-    const dbUrl = (processId: string): string => {
-      const login: ProcessLogin = PROCESS_LOGINS[processId];
-      const secret = loginSecrets[login.login];
-      const password = secret.secretValueFromJson('password').unsafeUnwrap();
-      return buildDatabaseUrl({
-        login: login.login,
-        password,
-        proxyEndpoint,
-        db: config.dbName,
-      });
+    // Each process gets a password-less URL in its environment and the login secret's
+    // password as an ECS secret (<PREFIX>_PASSWORD), which DAD-Main combines at start.
+    const db = (processId: string) => {
+      const login = PROCESS_LOGINS[processId];
+      return databaseConnection(login, loginSecrets[login.login], proxyEndpoint, config.dbName);
     };
 
     const trustedProxyCidrs = computeSubnetCidrs.join(',');
 
     // --- api ------------------------------------------------------------
+    const apiDb = db('api');
     const api = factory.build({
       id: 'api',
       image: 'api',
@@ -170,9 +163,10 @@ export class ServicesStack extends cdk.Stack {
         DONOR_PUBLIC_ORIGIN: config.publicOrigin,
         DONOR_STAFF_ORIGIN: config.staffOrigin,
         DONOR_TRUSTED_PROXY_CIDRS: trustedProxyCidrs,
-        DONOR_API_DATABASE_URL: dbUrl('api'),
+        ...apiDb.environment,
       },
       secrets: {
+        ...apiDb.secrets,
         ...secretFields(appSecrets.stripe, ['STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET']),
         ...secretFields(appSecrets.encryption, [
           'DONOR_EMAIL_ENCRYPTION_KEY',
@@ -340,12 +334,12 @@ export class ServicesStack extends cdk.Stack {
     ];
 
     for (const w of workers) {
-      const login = PROCESS_LOGINS[w.processId];
+      const workerDb = db(w.processId);
       const environment: Record<string, string> = {
         // The worker binary refuses to start without this; whether workers run at all
         // is config.workersEnabled (their desired count).
         DONOR_GO_WORKERS_ENABLED: 'true',
-        [login.envVar]: dbUrl(w.processId),
+        ...workerDb.environment,
       };
       if (w.service === 'stripe-worker') {
         environment.DONOR_STRIPE_REQUESTS_PER_SECOND = '25';
@@ -361,6 +355,7 @@ export class ServicesStack extends cdk.Stack {
         command: ['worker', '--kind', w.kind],
         environment,
         secrets: {
+          ...workerDb.secrets,
           ...(w.service === 'stripe-worker' ? stripeKey : {}),
           ...(w.mail ? { ...emailKey, ...mailTransport } : {}),
         },
