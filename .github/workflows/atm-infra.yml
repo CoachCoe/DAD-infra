@@ -1,50 +1,21 @@
 name: ATM Infra (CDK)
-
-# Infrastructure pipeline for the apps/atm CDK app (CodeBuild runner, S3 evidence,
-# DynamoDB ledger, Secrets Manager, EventBridge/OIDC triggers). Deploys are
-# path-filtered so a change to this app or the shared packages deploys only this
-# app, never the other tenants in the monorepo.
+# Checks for the apps/atm CDK app (the DAD-Quality runner on AWS: CodeBuild, S3
+# evidence, DynamoDB, scheduled trigger). It is built and tested on every PR but is
+# deliberately NOT deployed, and this workflow has no deploy jobs.
 #
-# Flow (models DAD-Main/infra/.github/workflows/infra.yml):
-#   - every PR (unfiltered, so the required `synth` check always reports)
-#                              -> offline `cdk synth` of BOTH envs (no AWS creds).
-#                                 This is the real PR signal.
-#   - push to dev              -> `cdk deploy -c env=staging`  (sandbox 853377042897).
-#   - push to main             -> `cdk deploy -c env=production` (216833405626),
-#                                 gated by the `production` GitHub Environment
-#                                 (configure a manual-approval protection rule there).
+# Why: DAD-Main's ATM acceptance gate (atm.yml) and its Worker ledger are the single
+# source of truth for findings, and that ledger accepts only receipts bound to a GitHub
+# Actions run. Deploying this runner on its own would create a second findings store.
+# It is held until there is a need GitHub-hosted runs cannot meet (e.g. runs longer than
+# the gate's job limit); it would then publish through a GitHub job so the ledger's
+# trust model is unchanged. See docs/design/aws-infra-design.md §6.5 and DAD-Docs ADR 0006.
 #
-# Auth is GitHub OIDC assuming the pipeline-iam deploy role (no static keys). The
-# role ARN is read from a GitHub Environment variable (vars.INFRA_DEPLOY_ROLE_ARN)
-# so account ids are not hardcoded here. Credentialed jobs are gated on that
-# variable being set: before the account is bootstrapped the variable is unset, so
-# the deploy jobs are skipped (green) and the offline synth stays the only signal.
-# Region is us-east-2.
-
+# Every PR (unfiltered, so the required `synth` check always reports) -> unit tests and an
+# offline `cdk synth` of both environments, with no AWS credentials.
 on:
-  # No `paths:` filter on pull_request: the `synth` job is a required status check, and
-  # a required check that never runs (because a PR touched only docs, say) blocks the
-  # merge forever. Deploys below stay path-filtered.
   pull_request:
-  push:
-    branches: [dev, main]
-    paths:
-      - "apps/atm/**"
-      - "packages/**"
-      - ".github/workflows/atm-infra.yml"
-  workflow_dispatch:
-    inputs:
-      env:
-        description: Target environment
-        type: choice
-        options: [staging, production]
-        default: staging
-
-# OIDC needs id-token: write; the rest is read-only.
 permissions:
   contents: read
-  id-token: write
-
 concurrency:
   group: atm-infra-${{ github.ref }}
   cancel-in-progress: false
@@ -54,9 +25,6 @@ env:
   NODE_VERSION: "22"
 
 jobs:
-  # PRs: always validate the IaC offline with `cdk synth` of both envs (no AWS
-  # credentials needed). This job has no `if` gate on credentials/role vars; it is
-  # the unconditional PR signal.
   synth:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
@@ -90,80 +58,3 @@ jobs:
 
   # Merge to dev -> staging deploy. Skipped (green) until the account is
   # bootstrapped and INFRA_DEPLOY_ROLE_ARN is set (matches DAD-Main's pattern).
-  deploy-staging:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/dev' && vars.INFRA_DEPLOY_ROLE_ARN != ''
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    environment: staging
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-          cache-dependency-path: package-lock.json
-      - run: npm ci
-      - run: npm run build
-      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
-        with:
-          role-to-assume: ${{ vars.INFRA_DEPLOY_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
-      - name: cdk deploy (staging)
-        working-directory: apps/atm
-        run: npx cdk deploy -c env=staging --all --require-approval never
-
-  # Release tag or merge to main -> production deploy, gated by the `production`
-  # GitHub Environment (manual-approval protection rule is configured on that
-  # environment in repo settings, not in YAML) and the deploy-role var.
-  deploy-production:
-    if: >-
-      vars.INFRA_DEPLOY_ROLE_ARN != '' &&
-      github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    environment: production
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-          cache-dependency-path: package-lock.json
-      - run: npm ci
-      - run: npm run build
-      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
-        with:
-          role-to-assume: ${{ vars.INFRA_DEPLOY_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
-      - name: cdk deploy (production)
-        working-directory: apps/atm
-        run: npx cdk deploy -c env=production --all --require-approval never
-
-  # On-demand deploy to a chosen environment, gated on the deploy-role var.
-  deploy-dispatch:
-    if: github.event_name == 'workflow_dispatch' && vars.INFRA_DEPLOY_ROLE_ARN != ''
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    environment: ${{ inputs.env }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-          cache-dependency-path: package-lock.json
-      - run: npm ci
-      - run: npm run build
-      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
-        with:
-          role-to-assume: ${{ vars.INFRA_DEPLOY_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
-      - name: cdk deploy (${{ inputs.env }})
-        working-directory: apps/atm
-        run: npx cdk deploy -c env=${{ inputs.env }} --all --require-approval never

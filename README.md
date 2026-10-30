@@ -10,7 +10,7 @@ DAD-infra/
     pipeline-iam/    # shared GitHub OIDC provider + scoped deploy-role helper
   apps/
     dad-main/        # DAD-Main estate: VPC, RDS + Proxy, ECS Fargate, SES, NLB, pipeline IAM
-    atm/             # DAD-Quality runner: CodeBuild + S3 evidence + DynamoDB ledger + triggers
+    atm/             # DAD-Quality runner on AWS: built and tested, NOT deployed (see design §6.5)
   docs/
     design/          # architecture and decisions
 ```

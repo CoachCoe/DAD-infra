@@ -28,6 +28,8 @@ with DAD-Quality specified in full because it is the net-new work.
    (`0`/`1`/`2`/`3`/`130`), and persist the results durably. This is "Path A"
    from the deployment discussion: an ephemeral, batch-style acceptance runner,
    **not** a hosted public dashboard.
+   *Status: built and tested, held and not deployed; findings stay in DAD-Main's Worker
+   ledger (§6.5).*
 2. **Durable, private evidence + history (baked into A).** Store each run's
    `run.json`, `report.html`, and evidence off the ephemeral runner so results
    survive and can be shared. This was "Path C"; it is a property of A's output
@@ -206,6 +208,19 @@ not mistaken for inconsistency.
   The scheduler's role is allowed only `codebuild:StartBuild` on the project.
 
 ### 6.5 Trigger and source acquisition — scheduled runs; CI-triggered runs deferred
+
+> **Status (2026-10-29): held, not deployed.** DAD-Main's ATM acceptance gate and its
+> Cloudflare Worker ledger are the single source of truth for findings. That ledger
+> accepts only GitHub OIDC tokens from `CoachCoe/DAD-Main` on GitHub-hosted runners and
+> binds every receipt to a GitHub Actions run (`run_id:run_attempt`) and its evidence
+> artifact (`apps/atm-ledger/src/auth.ts`, `ledger.ts`). A CodeBuild run has neither, so
+> this runner cannot publish to it, and deploying it alone would create a second,
+> disconnected findings store (its DynamoDB table). `apps/atm` stays built and tested;
+> `atm-infra.yml` has no deploy jobs. Revisit only for a need GitHub-hosted runs cannot
+> meet (e.g. longer than the gate's job limit, or heavy AI exploration); then a GitHub
+> job would start the run, collect its evidence as an artifact and publish with its own
+> token, leaving the ledger's trust model unchanged. The rest of this section describes
+> the runner as built. DAD-Docs ADR 0006.
 
 **Decision: v1 runs are started by EventBridge Scheduler. Nothing in DAD-Main's CI
 starts them.** No AWS-side webhook or public ingress.
@@ -390,7 +405,6 @@ both.
    credential and a minted short-lived App token.
 7. **Website as a future tenant.** Leave out entirely, or add a tracking stub for
    when its Lightsail/DNS resources become IaC-managed?
-8. **How AWS runs relate to DAD-Main's ATM gate and ledger.** The gate (`atm.yml`) uses a
-   Cloudflare Worker ledger documented as authoritative; the AWS runner writes to
-   DynamoDB (§6.3). Decide whether the AWS runs complement the gate with a separate
-   ledger or integrate with the Worker ledger, before wiring CI to the runner (§6.5).
+8. **How AWS runs relate to DAD-Main's ATM gate and ledger — RESOLVED.** One ledger: the
+   Worker ledger stays authoritative and the AWS runner is held, not deployed (§6.5,
+   DAD-Docs ADR 0006).
