@@ -6,11 +6,13 @@ import * as ecr from 'aws-cdk-lib/aws-ecr';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import * as sns from 'aws-cdk-lib/aws-sns';
+import * as snsSubs from 'aws-cdk-lib/aws-sns-subscriptions';
 import * as cloudwatch from 'aws-cdk-lib/aws-cloudwatch';
 import * as cwActions from 'aws-cdk-lib/aws-cloudwatch-actions';
 import * as scheduler from 'aws-cdk-lib/aws-scheduler';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import { EnvConfig } from './config';
+import { toRetentionDays } from './ecs-cluster-stack';
 import { imageTagFor } from './image-tag';
 import { ownerBootstrapTaskDefinition } from './db-bootstrap';
 import {
@@ -81,10 +83,7 @@ export class MaintenanceStack extends cdk.Stack {
 
     const log = new logs.LogGroup(this, 'MaintenanceLogs', {
       logGroupName: `/dad/${config.env}/maintenance`,
-      retention:
-        config.env === 'production'
-          ? logs.RetentionDays.ONE_YEAR
-          : logs.RetentionDays.ONE_MONTH,
+      retention: toRetentionDays(config.logRetentionDays),
       removalPolicy: config.deletionProtection
         ? cdk.RemovalPolicy.RETAIN
         : cdk.RemovalPolicy.DESTROY,
@@ -177,12 +176,19 @@ export class MaintenanceStack extends cdk.Stack {
     );
 
     // --- SNS topic for alarms -------------------------------------------
-    this.alarmTopic =
-      props.alarmTopic ??
-      new sns.Topic(this, 'MaintenanceAlarms', {
+    if (props.alarmTopic) {
+      this.alarmTopic = props.alarmTopic;
+    } else {
+      const topic = new sns.Topic(this, 'MaintenanceAlarms', {
         topicName: `dad-${config.env}-maintenance-alarms`,
         displayName: `DAD ${config.env} maintenance alarms`,
       });
+      const email = this.node.tryGetContext('alarmEmail') as string | undefined;
+      if (email) {
+        topic.addSubscription(new snsSubs.EmailSubscription(email));
+      }
+      this.alarmTopic = topic;
+    }
 
     // --- EventBridge Scheduler: reconcile daily ~00:30 America/New_York --
     const schedulerRole = new iam.Role(this, 'ReconcileSchedulerRole', {

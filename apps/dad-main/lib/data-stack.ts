@@ -97,7 +97,9 @@ export class DataStack extends cdk.Stack {
       maxAllocatedStorage: 200,
       storageType: rds.StorageType.GP3,
       storageEncrypted: true,
-      // Automated backups.
+      enablePerformanceInsights: true,
+      cloudwatchLogsExports: ['postgresql'],
+      // Automated backups (these also provide point-in-time recovery).
       backupRetention: cdk.Duration.days(config.multiAz ? 14 : 7),
       deletionProtection: config.deletionProtection,
       databaseName: config.dbName,
