@@ -129,7 +129,7 @@ new EdgeStack(app, stackId('edge'), {
   nlbSecurityGroup: network.nlbSecurityGroup,
 });
 
-// 7. Observability — SNS topic + ECS health + monitor queue-age alarms.
+// 7. Observability — SNS topic + ECS health + database alarms.
 new ObservabilityStack(app, stackId('observability'), {
   env,
   config,
