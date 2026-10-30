@@ -92,12 +92,23 @@ class FakeIam:
         return {"AccessKey": {"AccessKeyId": kid, "SecretAccessKey": f"secret-{kid}"}}
 
 
+class ClusterNotFound(Exception):
+    pass
+
+
 class FakeEcs:
-    def __init__(self, services):
+    class exceptions:
+        ClusterNotFoundException = ClusterNotFound
+
+    def __init__(self, services, cluster_exists=True):
         self.services = services
+        self.cluster_exists = cluster_exists
         self.updated = []
 
     def describe_services(self, cluster, services):
+        if not self.cluster_exists:
+            # Real ECS raises for a missing cluster; it does not return an empty list.
+            raise ClusterNotFound("Cluster not found.")
         return {"services": [s for s in self.services if s["serviceName"] in services]}
 
     def update_service(self, cluster, service, forceNewDeployment):
@@ -230,6 +241,13 @@ class RotationTest(unittest.TestCase):
         rotate(sm, FakeIam([]), ecs)
         self.assertEqual(ecs.updated, [])
         self.assertEqual(sm.stages["v-new"], ["AWSCURRENT"])
+
+    def test_first_rotation_before_the_cluster_exists_still_succeeds(self):
+        sm = FakeSecrets({**BASE, "DONOR_SMTP_USERNAME": "", "DONOR_SMTP_PASSWORD": ""})
+        ecs = FakeEcs([], cluster_exists=False)
+        rotate(sm, FakeIam([]), ecs)  # must not raise
+        self.assertEqual(sm.stages["v-new"], ["AWSCURRENT"])
+        self.assertEqual(ecs.updated, [])
 
     def test_refuses_when_rotation_is_disabled_or_the_version_is_not_pending(self):
         sm = FakeSecrets({**BASE}, rotation_enabled=False)

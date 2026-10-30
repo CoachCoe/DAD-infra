@@ -164,7 +164,12 @@ def _restart_mail_workers(ecs):
     services = [s for s in os.environ.get("MAIL_SERVICES", "").split(",") if s]
     if not cluster or not services:
         return
-    found = ecs.describe_services(cluster=cluster, services=services).get("services", [])
+    try:
+        found = ecs.describe_services(cluster=cluster, services=services).get("services", [])
+    except ecs.exceptions.ClusterNotFoundException:
+        # First deploy: the SES stack (and its first rotation) comes before the cluster.
+        # The secret is already promoted; there is simply nothing running to restart.
+        return
     for service in found:
         # Skip workers that are switched off; missing services (first deploy) are
         # simply absent from the response.
