@@ -49,28 +49,31 @@ export class GitHubOidcProvider extends Construct {
 }
 
 /**
- * Build the GitHub OIDC `sub` claim subjects that a role should trust for a
- * given environment and repo.
+ * The `sub` claim GitHub issues to a job that runs under a GitHub Environment:
+ * `repo:<owner>/<repo>:environment:<name>`.
  *
- *   - staging    → the `dev` branch
- *   - production → the `production` GitHub Environment + any release tag
- *
- * The repo slug (`owner/repo`) is a caller input, never hardcoded.
+ * When a job sets `environment:`, GitHub uses this form and NOT the branch or tag
+ * form, so a role that must be assumed by such a job has to trust this exact value.
+ * The GitHub Environment names are `staging` and `production`, matching the CDK
+ * env names.
  */
-export function githubSubjectConditions(
+export function githubEnvironmentSubject(
   repo: string,
   env: 'staging' | 'production',
-): string[] {
-  return env === 'production'
-    ? [`repo:${repo}:environment:production`, `repo:${repo}:ref:refs/tags/*`]
-    : [`repo:${repo}:ref:refs/heads/dev`];
+): string {
+  return `repo:${repo}:environment:${env}`;
 }
 
 /**
- * Build an {@link iam.OpenIdConnectPrincipal} for the given provider, repo, and
- * env, with the `aud` pinned to STS and the `sub` pinned to the env's subjects.
+ * Build an {@link iam.OpenIdConnectPrincipal} that trusts exactly one repo's GitHub
+ * Environment: `aud` pinned to STS and `sub` an exact match (no wildcards) on
+ * {@link githubEnvironmentSubject}.
+ *
+ * The trust is only as narrow as the GitHub Environment itself. Any job in `repo`
+ * that runs under this environment can assume the role, so restrict which branches
+ * and tags may deploy to the environment in the repository settings.
  */
-export function githubOidcPrincipal(
+export function githubEnvironmentPrincipal(
   provider: iam.IOpenIdConnectProvider,
   repo: string,
   env: 'staging' | 'production',
@@ -78,9 +81,7 @@ export function githubOidcPrincipal(
   return new iam.OpenIdConnectPrincipal(provider, {
     StringEquals: {
       [`${GITHUB_OIDC_HOST}:aud`]: OIDC_AUDIENCE,
-    },
-    StringLike: {
-      [`${GITHUB_OIDC_HOST}:sub`]: githubSubjectConditions(repo, env),
+      [`${GITHUB_OIDC_HOST}:sub`]: githubEnvironmentSubject(repo, env),
     },
   });
 }
@@ -104,7 +105,10 @@ export interface ScopedDeployRoleProps {
 /**
  * Mint a least-privilege GitHub-OIDC-assumable deploy role.
  *
- * The role trusts only the given repo and the env-appropriate `sub` claims.
+ * The role trusts exactly the given repo's GitHub Environment (see
+ * {@link githubEnvironmentPrincipal}). This package deliberately offers no branch or
+ * tag form: every DAD deploy job runs under a GitHub Environment, which is where branch
+ * and approval rules are enforced, so that is the only trust a deploy role may have.
  * Callers attach their own narrowly-scoped policy statements to the returned
  * role (e.g. ATM's "StartBuild on exactly this project").
  */
@@ -115,7 +119,7 @@ export function scopedDeployRole(
 ): iam.Role {
   return new iam.Role(scope, id, {
     roleName: props.roleName,
-    assumedBy: githubOidcPrincipal(props.provider, props.repo, props.env),
+    assumedBy: githubEnvironmentPrincipal(props.provider, props.repo, props.env),
     description: props.description,
     maxSessionDuration: props.maxSessionDuration ?? Duration.hours(1),
   });

@@ -1,107 +1,108 @@
-# Branch protection — solo-friendly ruleset (operator handoff)
+# Branch protection — solo-friendly rulesets
 
-This repo follows the DAD family convention: a **`main`** branch (default/stable)
-and a **`dev`** working branch. Branch protection in the DAD family is configured
-in **GitHub repository settings**, not committed to the repo (no CODEOWNERS, no
-`.github/settings.yml`, no ruleset files live in the other repos). This document
-is the one-time handoff to reproduce a solo-friendly protection setup here.
+DAD-infra follows the DAD family convention: **`main`** (default, stable) and **`dev`**
+(working branch). The family's shared rules are in DAD-Docs
+(`conventions/repos-and-branches.md`). Protection lives in **GitHub repository
+settings**, not in the tree, so this document is the record of what is applied and how
+to reapply it.
 
-Nothing in this repo applies these rules automatically. **You** run the commands
-below (or click through the GitHub UI). They make live GitHub API calls — they are
-not part of the offline verification gate and are not run by any workflow.
+DAD-infra uses repository **rulesets** (not classic branch protection) and protects
+**both** `main` and `dev`.
 
-## Goal: solo-friendly protection
+## What is applied
 
-A single maintainer must be able to self-merge, while still routing every change
-through a PR and a passing status check. So:
+| Setting | Value | Why |
+|---|---|---|
+| Require a pull request | on | No direct pushes. |
+| Required approvals | **0** | A solo owner cannot approve their own PR; raise to 1 when collaborators join. |
+| Require conversation resolution | on | No unresolved review threads. |
+| Required status check | `synth`, branch up to date | No red merges. |
+| Block force-pushes | on | Protects history. |
+| Block deletion | on | The branches cannot be deleted. |
+| Bypass | repository **admin**, `pull_request` mode | The owner can still merge a PR if a check cannot report. Use it only when a check cannot run, never to merge past one that failed or is still running (DAD-Docs ADR 0005). Does not allow direct pushes. |
 
-- Require a pull request before merging to `main` **and** `dev`.
-- **0 required approvals** (so you can merge your own PRs without a second person).
-- Require the `atm-infra.yml` PR status check (the offline `cdk synth` of both
-  envs) to pass before merge.
-- Block force-pushes and branch deletion on both branches.
-- Do **not** require linear history or signed commits unless the rest of the
-  family adopts them (it currently does not).
+### Why `synth` must always run
 
-## Apply with `gh` (recommended)
+A required check that never runs blocks the merge forever. Both infra workflows
+(`atm-infra.yml`, `dad-main-infra.yml`) therefore have **no `paths:` filter on
+`pull_request`**; on every PR each runs the unit tests (`npx jest`) and an offline
+`cdk synth` of both environments. Both define a job named `synth`, and the ruleset
+requires that name. `dad-main-infra.yml`'s deploy triggers (`push` to `dev` and `main`)
+stay path-filtered; `atm-infra.yml` has none. If you rename the `synth` job, update the
+ruleset in the same change.
 
-Requires the GitHub CLI authenticated against `CoachCoe/DAD-infra`. These use the
-**rulesets** API (the modern equivalent of classic branch protection). Run each
-block once; re-running updates the existing ruleset if you keep the same name.
+## Apply (one-time per branch)
 
-> The required status check name must match the job as GitHub reports it from
-> `atm-infra.yml`. The PR-only offline-synth job is `synth` — confirm the exact
-> check name in the Actions UI after the first PR run and adjust `context` below
-> if GitHub reports it differently (e.g. `synth (staging)`).
+These make live GitHub API calls. Run them yourself with the GitHub CLI authenticated
+as an admin of `CoachCoe/DAD-infra`; no workflow runs them.
 
-### Ruleset for `main`
+`ruleset.json` (for `main`; for `dev`, change `name` and the `include` ref):
 
-```sh
-gh api -X POST repos/CoachCoe/DAD-infra/rulesets \
-  -f name='protect-main' \
-  -f target='branch' \
-  -f enforcement='active' \
-  -F 'conditions[ref_name][include][]=refs/heads/main' \
-  -F 'rules[][type]=pull_request' \
-  -F 'rules[][parameters][required_approving_review_count]=0' \
-  -F 'rules[][parameters][dismiss_stale_reviews_on_push]=false' \
-  -F 'rules[][parameters][require_code_owner_review]=false' \
-  -F 'rules[][type]=required_status_checks' \
-  -F 'rules[][parameters][required_status_checks][][context]=synth' \
-  -F 'rules[][parameters][strict_required_status_checks_policy]=true' \
-  -F 'rules[][type]=non_fast_forward' \
-  -F 'rules[][type]=deletion'
+```json
+{
+  "name": "protect-main",
+  "target": "branch",
+  "enforcement": "active",
+  "conditions": { "ref_name": { "include": ["refs/heads/main"], "exclude": [] } },
+  "bypass_actors": [
+    { "actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "pull_request" }
+  ],
+  "rules": [
+    {
+      "type": "pull_request",
+      "parameters": {
+        "required_approving_review_count": 0,
+        "dismiss_stale_reviews_on_push": false,
+        "require_code_owner_review": false,
+        "require_last_push_approval": false,
+        "required_review_thread_resolution": true,
+        "allowed_merge_methods": ["merge", "squash", "rebase"]
+      }
+    },
+    {
+      "type": "required_status_checks",
+      "parameters": {
+        "strict_required_status_checks_policy": true,
+        "do_not_enforce_on_create": false,
+        "required_status_checks": [{ "context": "synth" }]
+      }
+    },
+    { "type": "non_fast_forward" },
+    { "type": "deletion" }
+  ]
+}
 ```
 
-### Ruleset for `dev`
+`actor_id: 5` is GitHub's built-in **Admin** repository role.
 
-Same rules, different target branch:
-
-```sh
-gh api -X POST repos/CoachCoe/DAD-infra/rulesets \
-  -f name='protect-dev' \
-  -f target='branch' \
-  -f enforcement='active' \
-  -F 'conditions[ref_name][include][]=refs/heads/dev' \
-  -F 'rules[][type]=pull_request' \
-  -F 'rules[][parameters][required_approving_review_count]=0' \
-  -F 'rules[][parameters][dismiss_stale_reviews_on_push]=false' \
-  -F 'rules[][parameters][require_code_owner_review]=false' \
-  -F 'rules[][type]=required_status_checks' \
-  -F 'rules[][parameters][required_status_checks][][context]=synth' \
-  -F 'rules[][parameters][strict_required_status_checks_policy]=true' \
-  -F 'rules[][type]=non_fast_forward' \
-  -F 'rules[][type]=deletion'
-```
-
-### Set `main` as the default branch
+Create:
 
 ```sh
-gh api -X PATCH repos/CoachCoe/DAD-infra -f default_branch='main'
+gh api -X POST repos/CoachCoe/DAD-infra/rulesets --input ruleset.json
 ```
 
-## Apply via the GitHub UI (alternative)
+Update an existing ruleset (look up its id first):
 
-Settings → Rules → Rulesets → New branch ruleset, once per branch:
+```sh
+id=$(gh api repos/CoachCoe/DAD-infra/rulesets --jq '.[] | select(.name=="protect-main") | .id')
+gh api -X PUT "repos/CoachCoe/DAD-infra/rulesets/$id" --input ruleset.json
+```
 
-1. **Name**: `protect-main` / `protect-dev`; **Enforcement**: Active.
-2. **Target branches**: Include `main` (then a second ruleset for `dev`).
-3. Enable **Require a pull request before merging**, set **Required approvals = 0**.
-4. Enable **Require status checks to pass**, add the `synth` check, tick
-   **Require branches to be up to date** (strict).
-5. Enable **Block force pushes** and **Restrict deletions**.
-6. Leave **Require linear history** and **Require signed commits** off (match the
-   family).
+Set the default branch:
 
-Settings → General → Default branch → set to `main`.
+```sh
+gh api -X PATCH repos/CoachCoe/DAD-infra -f default_branch=main
+```
 
 ## Verify
 
 ```sh
-gh api repos/CoachCoe/DAD-infra/rulesets
-gh api repos/CoachCoe/DAD-infra --jq '.default_branch'
+gh api repos/CoachCoe/DAD-infra/rulesets --jq '.[] | {name, enforcement}'
+gh api repos/CoachCoe/DAD-infra --jq .default_branch
 ```
 
-Both rulesets should show `enforcement: active`; the default branch should be
-`main`.
-```
+Both rulesets should be `active` and the default branch `main`.
+
+## When collaborators join
+
+Raise `required_approving_review_count` to 1 and reconsider the admin bypass.

@@ -48,7 +48,7 @@ const runner = new RunnerStack(app, stackId('runner'), {
   secrets: [secrets.openai, secrets.tinker],
 });
 
-// Triggers: EventBridge Scheduler + GitHub OIDC StartBuild role.
+// Triggers: EventBridge Scheduler only (no CI-triggered role; see trigger-stack.ts).
 new TriggerStack(app, stackId('trigger'), {
   env,
   config,

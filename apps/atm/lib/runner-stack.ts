@@ -10,10 +10,11 @@ import { AtmEnvConfig } from './atm-config';
 import { BY_STATUS_INDEX } from './ledger-stack';
 
 /**
- * Name of the StartBuild-injected environment variable that carries the
- * short-lived GitHub App installation token used to clone DAD-Main at the
- * dispatched SHA. DAD-Main CI supplies the value per build; the project
- * definition holds only this placeholder, never a stored credential.
+ * Name of the optional environment variable that carries a GitHub token used to
+ * clone DAD-Main. A caller of StartBuild may supply it per build; the project
+ * definition holds only an empty placeholder, never a stored credential. EventBridge
+ * Scheduler supplies none, so scheduled runs clone anonymously, which works only
+ * while DAD-Main is a public repository.
  */
 export const GITHUB_TOKEN_ENV_VAR = 'GITHUB_APP_TOKEN';
 
@@ -29,14 +30,13 @@ export interface RunnerStackProps extends cdk.StackProps {
 }
 
 /**
- * RunnerStack (PLAN item 1.5).
+ * RunnerStack.
  *
  * The CodeBuild project `atm-runner-<env>` that runs an ATM acceptance pass.
  * Privileged (Docker-in-Docker) so ATM can build DAD-Main images and drive a
- * real browser. Source is the DAD-Main GitHub repo; the clone authenticates
- * with a short-lived GitHub App token injected via the StartBuild environment
- * (modelled here as a placeholder env var), so the project owns no stored
- * GitHub credential.
+ * real browser. Source is the DAD-Main GitHub repo; an optional token supplied at
+ * StartBuild time (modelled here as a placeholder env var) authenticates the
+ * clone, so the project owns no stored GitHub credential.
  *
  * The service role is least-privilege: read only the `atm/<env>/*` secrets,
  * read/write only this env's evidence bucket, read + conditional-write only
@@ -134,9 +134,8 @@ export class RunnerStack extends cdk.Stack {
       }),
     );
 
-    // GitHub App installation token: injected per build by DAD-Main CI's
-    // StartBuild call. The project carries only a placeholder; no stored
-    // CodeBuild GitHub connection.
+    // Optional GitHub token, supplied per build by a StartBuild caller. The project
+    // carries only an empty placeholder; no stored CodeBuild GitHub connection.
     const environmentVariables: Record<string, codebuild.BuildEnvironmentVariable> = {
       [GITHUB_TOKEN_ENV_VAR]: {
         type: codebuild.BuildEnvironmentVariableType.PLAINTEXT,
@@ -159,12 +158,13 @@ export class RunnerStack extends cdk.Stack {
     this.project = new codebuild.Project(this, 'RunnerProject', {
       projectName,
       role,
-      // DAD-Main repo; cloned at --source-version <sha> supplied by StartBuild.
-      // Authentication uses the injected token (buildspec), not a stored creds.
+      // DAD-Main repo; the buildspec clones it at the revision under validation
+      // (--source-version from StartBuild, else the default branch). Any token is
+      // the optional per-build one above, never a stored credential.
       source: codebuild.Source.gitHub({
         owner: config.githubRepo.split('/')[0],
         repo: config.githubRepo.split('/')[1],
-        // No webhook: runs are started explicitly via StartBuild (trigger stack).
+        // No webhook: runs are started explicitly via StartBuild (the schedule).
       }),
       environment: {
         buildImage: codebuild.LinuxBuildImage.STANDARD_7_0,
