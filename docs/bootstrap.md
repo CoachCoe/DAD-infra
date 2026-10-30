@@ -162,11 +162,11 @@ switch: it sets their desired count, and DAD-Main's `deploy.yml` rolls only serv
 reports as running. Turn them on once mail (SES out of sandbox, a working SMTP password)
 and, if used, Stripe are configured.
 
-### 9. DAD-Quality runner (optional)
+### 9. DAD-Quality runner: not deployed
 
-From `apps/atm`: `npx cdk deploy -c env=$ENV --all`, then put the provider API keys in
-`atm/$ENV/openai` and `atm/$ENV/tinker` if AI exploration is wanted. Runs start from the
-nightly schedule.
+Do not deploy `apps/atm`. DAD-Main's ATM gate and its Worker ledger are the single source
+of truth for findings, and this runner cannot publish to that ledger (design doc §6.5,
+DAD-Docs ADR 0006).
 
 ## Not verified
 
