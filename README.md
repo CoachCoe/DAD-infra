@@ -87,8 +87,8 @@ exactly one repo:
 
 | Repo | Workflow | Role (created by `apps/dad-main` pipeline-iam) | Environment variable |
 |---|---|---|---|
-| `CoachCoe/DAD-infra` | `dad-main-infra.yml` | `dad-<env>-infra-deploy` | `INFRA_DEPLOY_ROLE_ARN` |
-| `CoachCoe/DAD-Main` | `deploy.yml` | `dad-<env>-app-deploy` | `APP_DEPLOY_ROLE_ARN` |
+| `pre-dad/DAD-infra` | `dad-main-infra.yml` | `dad-<env>-infra-deploy` | `INFRA_DEPLOY_ROLE_ARN` |
+| `pre-dad/DAD-Main` | `deploy.yml` | `dad-<env>-app-deploy` | `APP_DEPLOY_ROLE_ARN` |
 
 Create the `staging` and `production` environments in **both** repos and set the
 variable on each (the role ARN is a stack output of the account's `pipeline-iam`

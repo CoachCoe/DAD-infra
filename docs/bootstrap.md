@@ -157,9 +157,9 @@ For each repository's `$ENV` GitHub Environment (already created, with branch ru
 
 | Repository | Variable | Value |
 |---|---|---|
-| CoachCoe/DAD-infra | `INFRA_DEPLOY_ROLE_ARN` | `InfraDeployRoleArn` output of `dad-pipeline-iam-$ENV` |
-| CoachCoe/DAD-Main | `APP_DEPLOY_ROLE_ARN` | `AppDeployRoleArn` output of `dad-pipeline-iam-$ENV` |
-| CoachCoe/DAD-Main | `DONOR_PUBLIC_ORIGIN`, `DONOR_STAFF_ORIGIN` | the environment's origins |
+| pre-dad/DAD-infra | `INFRA_DEPLOY_ROLE_ARN` | `InfraDeployRoleArn` output of `dad-pipeline-iam-$ENV` |
+| pre-dad/DAD-Main | `APP_DEPLOY_ROLE_ARN` | `AppDeployRoleArn` output of `dad-pipeline-iam-$ENV` |
+| pre-dad/DAD-Main | `DONOR_PUBLIC_ORIGIN`, `DONOR_STAFF_ORIGIN` | the environment's origins |
 
 The pipelines skip their credentialed jobs until these are set.
 

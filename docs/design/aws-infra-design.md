@@ -211,7 +211,7 @@ not mistaken for inconsistency.
 
 > **Status (2026-10-29): held, not deployed.** DAD-Main's ATM acceptance gate and its
 > Cloudflare Worker ledger are the single source of truth for findings. That ledger
-> accepts only GitHub OIDC tokens from `CoachCoe/DAD-Main` on GitHub-hosted runners and
+> accepts only GitHub OIDC tokens from `pre-dad/DAD-Main` on GitHub-hosted runners and
 > binds every receipt to a GitHub Actions run (`run_id:run_attempt`) and its evidence
 > artifact (`apps/atm-ledger/src/auth.ts`, `ledger.ts`). A CodeBuild run has neither, so
 > this runner cannot publish to it, and deploying it alone would create a second,

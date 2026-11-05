@@ -26,11 +26,11 @@ describe('GitHubOidcProvider', () => {
 
 describe('githubEnvironmentSubject', () => {
   test('is the sub claim GitHub issues to a job under a GitHub Environment', () => {
-    expect(githubEnvironmentSubject('CoachCoe/DAD-infra', 'staging')).toBe(
-      'repo:CoachCoe/DAD-infra:environment:staging',
+    expect(githubEnvironmentSubject('pre-dad/DAD-infra', 'staging')).toBe(
+      'repo:pre-dad/DAD-infra:environment:staging',
     );
-    expect(githubEnvironmentSubject('CoachCoe/DAD-Main', 'production')).toBe(
-      'repo:CoachCoe/DAD-Main:environment:production',
+    expect(githubEnvironmentSubject('pre-dad/DAD-Main', 'production')).toBe(
+      'repo:pre-dad/DAD-Main:environment:production',
     );
   });
 });
@@ -42,7 +42,7 @@ describe('githubEnvironmentPrincipal', () => {
     const oidc = new GitHubOidcProvider(stack, 'Oidc');
     new iam.Role(stack, 'R', {
       roleName: 'env-role',
-      assumedBy: githubEnvironmentPrincipal(oidc.provider, 'CoachCoe/DAD-infra', 'production'),
+      assumedBy: githubEnvironmentPrincipal(oidc.provider, 'pre-dad/DAD-infra', 'production'),
     });
     Template.fromStack(stack).hasResourceProperties('AWS::IAM::Role', {
       RoleName: 'env-role',
@@ -54,7 +54,7 @@ describe('githubEnvironmentPrincipal', () => {
               StringEquals: {
                 'token.actions.githubusercontent.com:aud': OIDC_AUDIENCE,
                 'token.actions.githubusercontent.com:sub':
-                  'repo:CoachCoe/DAD-infra:environment:production',
+                  'repo:pre-dad/DAD-infra:environment:production',
               },
             },
           }),
@@ -72,7 +72,7 @@ describe('scopedDeployRole', () => {
       const oidc = new GitHubOidcProvider(stack, 'Oidc');
       scopedDeployRole(stack, 'DeployRole', {
         provider: oidc.provider,
-        repo: 'CoachCoe/DAD-Main',
+        repo: 'pre-dad/DAD-Main',
         env,
         roleName: 'test-deploy',
       });
@@ -85,7 +85,7 @@ describe('scopedDeployRole', () => {
               Condition: {
                 StringEquals: {
                   'token.actions.githubusercontent.com:aud': OIDC_AUDIENCE,
-                  'token.actions.githubusercontent.com:sub': `repo:CoachCoe/DAD-Main:environment:${env}`,
+                  'token.actions.githubusercontent.com:sub': `repo:pre-dad/DAD-Main:environment:${env}`,
                 },
               },
             }),

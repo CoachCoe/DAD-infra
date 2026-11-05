@@ -34,7 +34,7 @@ ruleset in the same change.
 ## Apply (one-time per branch)
 
 These make live GitHub API calls. Run them yourself with the GitHub CLI authenticated
-as an admin of `CoachCoe/DAD-infra`; no workflow runs them.
+as an admin of `pre-dad/DAD-infra`; no workflow runs them.
 
 `ruleset.json` (for `main`; for `dev`, change `name` and the `include` ref):
 
@@ -78,27 +78,27 @@ as an admin of `CoachCoe/DAD-infra`; no workflow runs them.
 Create:
 
 ```sh
-gh api -X POST repos/CoachCoe/DAD-infra/rulesets --input ruleset.json
+gh api -X POST repos/pre-dad/DAD-infra/rulesets --input ruleset.json
 ```
 
 Update an existing ruleset (look up its id first):
 
 ```sh
-id=$(gh api repos/CoachCoe/DAD-infra/rulesets --jq '.[] | select(.name=="protect-main") | .id')
-gh api -X PUT "repos/CoachCoe/DAD-infra/rulesets/$id" --input ruleset.json
+id=$(gh api repos/pre-dad/DAD-infra/rulesets --jq '.[] | select(.name=="protect-main") | .id')
+gh api -X PUT "repos/pre-dad/DAD-infra/rulesets/$id" --input ruleset.json
 ```
 
 Set the default branch:
 
 ```sh
-gh api -X PATCH repos/CoachCoe/DAD-infra -f default_branch=main
+gh api -X PATCH repos/pre-dad/DAD-infra -f default_branch=main
 ```
 
 ## Verify
 
 ```sh
-gh api repos/CoachCoe/DAD-infra/rulesets --jq '.[] | {name, enforcement}'
-gh api repos/CoachCoe/DAD-infra --jq .default_branch
+gh api repos/pre-dad/DAD-infra/rulesets --jq '.[] | {name, enforcement}'
+gh api repos/pre-dad/DAD-infra --jq .default_branch
 ```
 
 Both rulesets should be `active` and the default branch `main`.
