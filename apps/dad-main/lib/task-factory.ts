@@ -152,8 +152,10 @@ export class TaskFactory {
       container.addPortMappings(pm);
     }
 
-    // Grant the task permission to pull its image from ECR.
-    this.repositories[spec.image].grantPull(taskDefinition.taskRole);
+    // ECR pull is granted to the EXECUTION role automatically by
+    // `ContainerImage.fromEcrRepository` above (ECS pulls the image as the execution
+    // role). The task role is the identity the running container assumes and never pulls
+    // an image, so it is deliberately not granted ECR access.
 
     return { taskDefinition, container };
   }
