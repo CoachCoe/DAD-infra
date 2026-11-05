@@ -51,7 +51,7 @@ describe('PipelineIamStack', () => {
       expect(trustCondition(t, `dad-${env}-infra-deploy`)).toEqual({
         StringEquals: {
           [AUD]: 'sts.amazonaws.com',
-          [SUB]: `repo:CoachCoe/DAD-infra:environment:${env}`,
+          [SUB]: `repo:pre-dad/DAD-infra:environment:${env}`,
         },
       });
     },
@@ -64,15 +64,15 @@ describe('PipelineIamStack', () => {
       expect(trustCondition(t, `dad-${env}-app-deploy`)).toEqual({
         StringEquals: {
           [AUD]: 'sts.amazonaws.com',
-          [SUB]: `repo:CoachCoe/DAD-Main:environment:${env}`,
+          [SUB]: `repo:pre-dad/DAD-Main:environment:${env}`,
         },
       });
     },
   );
 
   it('defaults to the real repos and neither role trusts the other\'s repo', () => {
-    expect(DAD_INFRA_REPO).toBe('CoachCoe/DAD-infra');
-    expect(DAD_MAIN_REPO).toBe('CoachCoe/DAD-Main');
+    expect(DAD_INFRA_REPO).toBe('pre-dad/DAD-infra');
+    expect(DAD_MAIN_REPO).toBe('pre-dad/DAD-Main');
     const t = Template.fromStack(buildGraph('staging').pipelineIam);
     expect(JSON.stringify(trustCondition(t, 'dad-staging-infra-deploy'))).not.toContain(
       'DAD-Main',

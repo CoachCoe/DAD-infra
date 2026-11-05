@@ -9,9 +9,9 @@ import { EnvConfig } from './config';
 import { clusterNameFor } from './ecs-cluster-stack';
 
 /** The repo whose workflow runs `cdk deploy` for this app (dad-main-infra.yml). */
-export const DAD_INFRA_REPO = 'CoachCoe/DAD-infra';
+export const DAD_INFRA_REPO = 'pre-dad/DAD-infra';
 /** The repo whose workflow rolls the application out (deploy.yml). */
-export const DAD_MAIN_REPO = 'CoachCoe/DAD-Main';
+export const DAD_MAIN_REPO = 'pre-dad/DAD-Main';
 
 /** Props for {@link PipelineIamStack}. */
 export interface PipelineIamStackProps extends cdk.StackProps {

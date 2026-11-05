@@ -24,7 +24,7 @@ import { Duration, aws_codebuild as codebuild } from 'aws-cdk-lib';
 export type { EnvName };
 
 /** The DAD-Main GitHub repo slug the runner clones. */
-export const DAD_MAIN_REPO = 'CoachCoe/DAD-Main';
+export const DAD_MAIN_REPO = 'pre-dad/DAD-Main';
 
 /** Resource-name prefix for every atm resource. */
 export const RESOURCE_PREFIX = 'atm';
